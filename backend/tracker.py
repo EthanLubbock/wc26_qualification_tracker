@@ -398,8 +398,7 @@ def _match_view(m: Match | None) -> dict | None:
 def _other_group_c_match(model: WorldCupModel) -> dict | None:
     m = next((m for m in model.matches
               if m.group == OUR_GROUP and OUR_TEAM not in (m.home, m.away)
-              and (not m.finished or m.state == "post")
-              and {"MAR", "HTI"} & {m.home, m.away}), None)
+              and {"MAR", "HTI"} <= {m.home, m.away}), None)
     return _match_view(m)
 
 
