@@ -1,6 +1,6 @@
 import { signed } from '../helpers.js'
 
-export default function Ladder({ thirds, cutoff }) {
+export default function Ladder({ thirds, cutoff, target }) {
   return (
     <>
       <table className="ladder">
@@ -16,7 +16,7 @@ export default function Ladder({ thirds, cutoff }) {
             const cls = [
               rank <= cutoff ? 'in' : '',
               rank === cutoff ? 'cut' : '',
-              t.abbr === 'SCO' ? 'sco' : ''
+              t.abbr === target ? 'sco' : ''
             ].join(' ').trim()
             return (
               <tr key={`${t.abbr}-${i}`} className={cls}>

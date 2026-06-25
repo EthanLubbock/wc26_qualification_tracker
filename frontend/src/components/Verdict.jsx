@@ -1,65 +1,98 @@
-import { ord, scoLine } from '../helpers.js'
+import { ord, targetLine } from '../helpers.js'
 
-// Works out the headline state from phase + live score + third-place table.
+const VERDICT_UI = {
+  win_group:  { cls: 'is-good', label: 'Won the group' },
+  runner_up:  { cls: 'is-good', label: 'Qualified 2nd' },
+  third_in:   { cls: 'is-warn', label: 'Through as best third' },
+  third_out:  { cls: 'is-bad',  label: 'Out — 3rd in group' },
+  fourth_out: { cls: 'is-bad',  label: 'Out — 4th in group' },
+}
+
 function computeVerdict(s) {
-  const sco = scoLine(s.sco_match)
-  const draw = s.scenarios.draw, lose = s.scenarios.lose
+  const sc = s.scenarios
+  const target = s.target
+  const name = s.all_teams?.find(t => t.abbr === target)?.name || target
 
-  if (s.phase === 'pre') {
+  if (!sc) return { cls: '', tag: `Group ${s.group}`, dot: false, head: name, sub: '' }
+
+  if (sc.phase === 'final') {
+    const ui = VERDICT_UI[sc.verdict] || { cls: '', label: sc.verdict }
+    const rankNote = sc.third_rank ? ` · ranked ${ord(sc.third_rank)} of thirds` : ''
     return {
-      cls: draw.in_top8 ? 'is-warn' : 'is-bad',
-      tag: 'Group C · Matchday 3', dot: false,
-      head: "Win and you're in",
-      sub: `Beat Brazil and Scotland qualify outright. A draw or defeat sends it to ` +
-        `the third-place race — a draw currently ranks ${ord(draw.third_rank)} of ` +
-        `${draw.field_size} (${draw.in_top8 ? 'inside' : 'outside'} the top 8), a narrow ` +
-        `loss ${ord(lose.third_rank)} of ${lose.field_size} (${lose.in_top8 ? 'in' : 'out'}).`
+      cls: ui.cls, tag: `Group ${s.group} · complete`, dot: false,
+      head: ui.label,
+      sub: `${name} have played all their group matches.${rankNote}`,
     }
   }
 
-  if (sco) {
-    const diff = (sco.scoScore ?? 0) - (sco.oppScore ?? 0)
-
-    if (s.phase === 'live') {
-      if (diff > 0) return {
-        cls: 'is-good', tag: 'Live vs Brazil', dot: true, head: 'On course to qualify',
-        sub: 'Scotland are ahead — a win means top two and the Round of 32, no other results needed.'
-      }
-      if (diff === 0) return {
-        cls: draw.in_top8 ? 'is-warn' : 'is-bad', tag: 'Live vs Brazil', dot: true,
-        head: 'Drawing — 3rd place',
-        sub: `As it stands Scotland finish 3rd on 4 points and sit ${ord(draw.third_rank)} of ` +
-          `${draw.field_size} among the thirds (${draw.in_top8 ? 'inside' : 'outside'} the top 8).`
-      }
-      return {
-        cls: lose.in_top8 ? 'is-warn' : 'is-bad', tag: 'Live vs Brazil', dot: true,
-        head: 'Losing — 3rd place',
-        sub: 'A defeat leaves Scotland 3rd on 3 points; the third-place table below is what counts.'
-      }
+  if (sc.clinched) {
+    return {
+      cls: 'is-good', tag: `Group ${s.group} · already through`, dot: false,
+      head: 'Qualified — already through',
+      sub: `${name} are guaranteed a place in the Round of 32 regardless of their remaining result.`,
     }
+  }
 
-    // post
+  if (sc.dead) {
+    return {
+      cls: 'is-bad', tag: `Group ${s.group} · eliminated`, dot: false,
+      head: 'Eliminated — no path to Round of 32',
+      sub: `${name} cannot qualify no matter what happens in their remaining match.`,
+    }
+  }
+
+  const m = sc.remaining
+  const line = targetLine(m, target)
+  const live = m && m.state === 'in'
+  const opp = line?.opp || 'opponent'
+
+  if (live && line) {
+    const diff = (line.targetScore ?? 0) - (line.oppScore ?? 0)
+    const drawOc = sc.outcomes?.draw
     if (diff > 0) return {
-      cls: 'is-good', tag: 'Full time · qualified', dot: false, head: 'Scotland are through',
-      sub: 'Beat Brazil, finished top two in Group C, into the Round of 32.'
+      cls: 'is-good', tag: `Live vs ${opp}`, dot: true, head: 'On course to qualify',
+      sub: `${name} are ahead — a win puts them in the Round of 32.`,
     }
-    const me = s.live_thirds.find(t => t.abbr === 'SCO')
-    const rank = me ? s.live_thirds.indexOf(me) + 1 : null
-    const inTop = rank !== null && rank <= s.cutoff
-    if (rank === null) return {
-      cls: 'is-warn', tag: 'Full time · 3rd in Group C', dot: false,
-      head: '3rd place — awaiting groups',
-      sub: 'Scotland finished 3rd. The remaining groups decide the eight best third-placed teams.'
+    if (diff === 0) {
+      const ui = VERDICT_UI[drawOc?.verdict] || { cls: 'is-warn', label: 'in the third-place race' }
+      return {
+        cls: ui.cls, tag: `Live vs ${opp}`, dot: true, head: `Drawing — ${ui.label}`,
+        sub: drawOc?.third_rank
+          ? `As it stands ${name} are ranked ${ord(drawOc.third_rank)} among third-placed teams.`
+          : `A draw sends ${name} into the third-place race.`,
+      }
     }
+    const lossOc = sc.outcomes?.loss
+    const lossUi = VERDICT_UI[lossOc?.verdict] || { cls: 'is-bad', label: 'at risk' }
     return {
-      cls: inTop ? 'is-good' : 'is-bad', tag: 'Full time · 3rd in Group C', dot: false,
-      head: inTop ? 'Holding a qualifying spot' : 'Below the line — for now',
-      sub: `Scotland are the ${ord(rank)} best third-placed team. Top ${s.cutoff} go through; ` +
-        `this can still move as other groups finish.`
+      cls: lossUi.cls, tag: `Live vs ${opp}`, dot: true, head: `Losing — ${lossUi.label}`,
+      sub: `A defeat would leave ${name} relying on the third-place table.`,
     }
   }
 
-  return { cls: '', tag: 'Group C', dot: false, head: 'Scotland', sub: '' }
+  // Pre-match
+  const winOc = sc.outcomes?.win
+  const drawOc = sc.outcomes?.draw
+  const lossOc = sc.outcomes?.loss
+  const winUi = VERDICT_UI[winOc?.verdict] || {}
+  const drawUi = VERDICT_UI[drawOc?.verdict] || {}
+  const lossUi = VERDICT_UI[lossOc?.verdict] || {}
+  const tag = `Group ${s.group} · vs ${opp}`
+  const winQualifies = ['win_group', 'runner_up'].includes(winOc?.verdict)
+
+  if (winQualifies && (drawUi.cls === 'is-warn' || drawUi.cls === 'is-bad')) {
+    return {
+      cls: 'is-warn', tag, dot: false,
+      head: "Win and you're in",
+      sub: `A win qualifies ${name} outright. A draw or loss goes to the third-place race.`,
+    }
+  }
+
+  return {
+    cls: winUi.cls || 'is-warn', tag, dot: false,
+    head: `Result matters · Group ${s.group}`,
+    sub: `Win → ${winUi.label || winOc?.verdict}. Draw → ${drawUi.label || drawOc?.verdict}. Loss → ${lossUi.label || lossOc?.verdict}.`,
+  }
 }
 
 export default function Verdict({ state }) {

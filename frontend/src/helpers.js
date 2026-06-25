@@ -13,16 +13,16 @@ export function kotime(iso) {
   }
 }
 
-// Normalise a match into Scotland's perspective.
-export function scoLine(m) {
+// Normalise a match into the target team's perspective.
+export function targetLine(m, target) {
   if (!m) return null
-  const scoHome = m.home === 'SCO'
+  const targetHome = m.home === target
   return {
-    opp: scoHome ? m.away : m.home,
-    scoScore: scoHome ? m.home_score : m.away_score,
-    oppScore: scoHome ? m.away_score : m.home_score,
+    opp: targetHome ? m.away_name || m.away : m.home_name || m.home,
+    targetScore: targetHome ? m.home_score : m.away_score,
+    oppScore: targetHome ? m.away_score : m.home_score,
     state: m.state,
-    kickoff: m.kickoff
+    kickoff: m.kickoff,
   }
 }
 

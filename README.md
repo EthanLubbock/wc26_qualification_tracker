@@ -1,96 +1,121 @@
-# Scotland · Road to the Round of 32
+# World Cup 2026 Group Stage Tracker
 
-A small self-hosted app that watches Scotland's 2026 World Cup qualification.
-One glance tells you whether they're through; if not, it shows exactly which
-results still have to fall their way. **FastAPI backend, React (Vite) frontend.**
-Built to run on the Pi and be reachable from your phone (and your mates') via
-Tailscale.
+A self-hosted app that follows any team's path through the 2026 FIFA World Cup group stage. Pick a team from the dropdown and get a live view of their qualification status, what each possible result means, where they sit in the third-place race, and a Monte Carlo probability of reaching the Round of 32.
 
-The brief, in football terms:
-
-- **Win vs Brazil → qualified.** Scotland finish top two in Group C, no other
-  results matter.
-- **Draw → 3rd on 4 points.** Morocco hold the head-to-head, so a draw can't
-  lift Scotland above them. It goes to the third-place race.
-- **Lose → 3rd on 3 points.** Still alive, because **8 of the 12 third-placed
-  teams advance** — only the bottom four thirds are eliminated.
-
-The app computes the full 12-team third-place table live and shows where
-Scotland sit under each outcome, updating as the other groups finish (to 27 June).
-
-## Layout
-
-```
-scotland-wc/
-  backend/         FastAPI + the tracker logic (stdlib only)
-    main.py        /api/state, /healthz, serves the built frontend
-    tracker.py     fetch, standings, FIFA tie-breakers, Scotland scenarios
-    test_tracker.py
-    requirements.txt
-  frontend/        Vite + React
-    src/           App.jsx, components/, helpers.js, styles.css
-    dist/          prebuilt (so you can run the backend without Node)
-  scotland-wc.service
-```
-
-The backend serves the React app's `dist/` itself, so in production it's all one
-origin on port 8080. In dev you run Vite separately and it proxies `/api` to the
-backend.
+**FastAPI backend · React (Vite) frontend · runs on a Raspberry Pi**
 
 ---
 
-## 1. Set up Tailscale first (remote access)
+## Features
 
-Do this on the Pi. It gives every device a stable name on your private tailnet
-and, optionally, a public HTTPS URL for friends who don't have Tailscale.
+- **Any team, any group** — dropdown lists all 48 teams organised by group letter; switching teams triggers an immediate update
+- **Live score integration** — polls ESPN's public scoreboard feed; refreshes every 90 s, drops to 20 s while the selected team's match is live
+- **Scenario analysis** — shows win / draw / loss verdicts for the next match, including where the team lands in the 12-group third-place table under each outcome
+- **Qualification probability** — Monte Carlo simulation (5 000 samples) using Elo-based win/draw/loss probabilities and Poisson goal modelling, displayed as an overall percentage and a stacked breakdown by finishing position
+- **Third-place tracker** — live ranking of all 12 groups' third-placed teams; the top 8 advance to the Round of 32
+- **Offline resilience** — serves the last good fetch with a "cached" badge if ESPN is unreachable
 
-```bash
-# Install on the Pi (Raspberry Pi OS / Debian / Ubuntu)
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up                 # opens an auth URL
-tailscale status                  # confirm the Pi's tailnet name, e.g. "sandbox"
+---
+
+## Project layout
+
+```
+wc2026-tracker/
+  backend/
+    main.py          FastAPI app — /api/state, /healthz, serves built frontend
+    tracker.py       Standings, tiebreakers, scenario logic (stdlib only)
+    odds.py          OddsProvider, NeutralOdds, EloOdds (worldcupelo.com)
+    simulate.py      Monte Carlo qualification_probability
+    test_tracker.py  Offline test suite (no network)
+    requirements.txt
+  frontend/
+    src/
+      App.jsx                 Team dropdown, polling loop, layout
+      components/
+        Verdict.jsx           Qualification status heading
+        Likelihood.jsx        Probability bar and percentage
+        Scenarios.jsx         Win/draw/loss outcome panels
+        Scores.jsx            Live/upcoming match cards
+        Ladder.jsx            Third-place table
+      helpers.js
+      styles.css
+    index.html
+    package.json
+    vite.config.js
+  scotland-wc.service        systemd unit (template — edit paths before use)
 ```
 
-Enable **MagicDNS** and **HTTPS certificates** in the Tailscale admin console
-(DNS page), then expose the app:
+The backend serves `frontend/dist/` directly, so in production it is one process on one port. In development Vite's dev server runs separately and proxies `/api` calls to the backend.
+
+---
+
+## How qualification works (2026 format)
+
+The 2026 World Cup has 12 groups of 4. **The top two teams in every group qualify automatically.** In addition, **the eight best third-placed teams** (ranked by points → goal difference → goals scored → fair play → FIFA ranking) also advance, giving 32 teams in total.
+
+The app implements the full FIFA tiebreaker chain — head-to-head record, overall goal difference, goals scored — and computes the live third-place table across all groups simultaneously.
+
+---
+
+## Probability model
+
+When a team still has matches to play, the app runs a Monte Carlo simulation:
+
+1. For each unplayed match, fetch win/draw/loss probabilities and expected goal supremacy from [worldcupelo.com](https://worldcupelo.com) (keyless API).
+2. Sample a scoreline for every unplayed match using a Poisson model calibrated to the Elo supremacy estimate.
+3. Apply all sampled results to the group tables and run the full tiebreaker/thirds logic.
+4. Repeat 5 000 times; count how often the target team finishes in each position.
+
+The result is shown as a percentage chance of qualification with a colour-coded breakdown by finishing path (win group / runner-up / via thirds / eliminated).
+
+Set `ODDS=neutral` to use flat 40/20/40 probabilities instead of Elo (useful for testing or if worldcupelo.com is unreachable).
+
+---
+
+## Setup
+
+### Requirements
+
+- Python 3.11+
+- Node 18+ (only needed to build the frontend — not needed to run a pre-built `dist/`)
+
+### Development (two terminals)
 
 ```bash
-# Private: serve to YOUR tailnet only, over HTTPS, no open ports
-sudo tailscale serve --bg 8080
-#   -> https://sandbox.<your-tailnet>.ts.net   (your devices only)
+# Backend — auto-reloads on file changes
+cd backend
+python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8080
 
-# Public: let friends in without installing Tailscale
-#   (first enable Funnel for this node in admin console > Access Controls)
-sudo tailscale funnel --bg 8080
-#   -> same link, now reachable by anyone who has it (treat it as semi-secret)
+# Frontend — Vite dev server, proxies /api to :8080
+cd frontend
+npm install
+npm run dev
+# → open http://localhost:5173
 ```
 
-Turn it off again with `sudo tailscale funnel --bg off` /
-`sudo tailscale serve --bg off`. If you only want it on your own tailnet, skip
-`serve`/`funnel` and just hit `http://sandbox:8080` from any logged-in device.
+### Production (single process)
 
-## 2. Run it
-
-### Production (one process, what the Pi runs)
-
-Build the frontend once, then run the backend — it serves the built app and the
-API together.
+Build the frontend once, then run the backend — it serves the built app and the API together.
 
 ```bash
-# build the UI (skip if you're using the prebuilt dist/ that ships here)
-cd frontend && npm install && npm run build && cd ..
+cd frontend
+npm install && npm run build
+cd ..
 
-# run the backend
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 8080
+# → open http://localhost:8080
 ```
 
-Open `http://sandbox.local:8080`.
+If you don't have Node available on the production machine, build `dist/` on a dev machine and copy the folder across.
 
-To keep it running and start on boot (mirrors your Morning Brief setup), edit the
-`User`/paths in `scotland-wc.service`, then:
+### Running as a systemd service (Linux / Raspberry Pi)
+
+Edit `scotland-wc.service` (update `User`, `WorkingDirectory`, and `ExecStart` paths to match your setup), then:
 
 ```bash
 sudo cp scotland-wc.service /etc/systemd/system/
@@ -99,75 +124,76 @@ sudo systemctl enable --now scotland-wc
 journalctl -u scotland-wc -f
 ```
 
-### Dev (hot-reload, two terminals)
+---
 
-```bash
-# terminal 1 — backend with reload
-cd backend && source .venv/bin/activate
-uvicorn main:app --reload --port 8080
+## Environment variables
 
-# terminal 2 — Vite dev server (proxies /api to :8080)
-cd frontend && npm run dev      # http://localhost:5173
-```
-
-## 3. Where to open it
-
-| From | URL |
-|------|-----|
-| The Pi / your LAN | `http://sandbox.local:8080` (or `http://<pi-ip>:8080`) |
-| Any of your devices on the tailnet | `http://sandbox:8080` |
-| After `tailscale serve` | `https://sandbox.<tailnet>.ts.net` |
-| Friends, after `tailscale funnel` | same `https://…ts.net` link |
-| Dev (Vite) | `http://localhost:5173` |
-
-`sandbox.local` uses mDNS (Avahi), which Raspberry Pi OS ships with — the
-easy-to-remember LAN address.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ODDS` | `elo` | Set to `neutral` to use flat 40/20/40 probabilities instead of Elo |
 
 ---
 
-## How it decides things
+## API
 
-Scotland's current Group C line: **3 pts, GD 0, 1 goal for** (beat Haiti 1–0,
-lost to Morocco 0–1).
+`GET /api/state?team=SCO` returns a JSON object with:
 
-- **Win** → 6 pts, finish 1st or 2nd. The only team that can pass 6 is Morocco
-  (beating Haiti to reach 7); Brazil are stuck on 4 after losing. So Scotland are
-  top-two in every case → through.
-- **Draw** → 4 pts. A draw doesn't change goal difference, so Scotland stay on
-  GD 0 and are ranked against the other groups' thirds by **points → goal
-  difference → goals scored**.
-- **Lose** → 3 pts; goal difference drops by the losing margin. The "Lose" panel
-  assumes a one-goal defeat (best realistic case) and flags that a heavier loss
-  lowers the ranking.
+| Field | Description |
+|-------|-------------|
+| `target` | Selected team abbreviation |
+| `group` | Group letter |
+| `group_table` | Standings for the group (ordered by tiebreaker) |
+| `scenarios` | Phase (`pending`/`final`), outcomes for next match, `clinched`/`dead` flags |
+| `qualification` | Monte Carlo result: per-outcome fractions, `qualify`, `samples` |
+| `live_thirds` | Live third-place ranking across all 12 groups |
+| `cutoff` | Number of thirds that advance (8) |
+| `all_teams` | Full list of teams with group (used to populate the dropdown) |
+| `live` | True if the target team's match is currently in progress |
+| `stale` | True if the payload is from a cached response (ESPN unreachable) |
 
-Qualification rule (2026): top two of each of the 12 groups, plus the **8 best
-third-placed teams**, ranked by points, goal difference, goals scored, then
-fair-play score, then world ranking. The last two aren't in the free feed and
-only matter on an exact tie — the app notes this.
+Unknown team abbreviations return HTTP 422. Valid abbreviations are in the `all_teams` list from any successful response.
 
-## Data source and reliability
+---
 
-Pulls from ESPN's public, key-free scoreboard endpoint
-(`site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard`). It's
-undocumented and unofficial, so the app:
+## Testing
 
-- caches each finished day to `espn_cache.json` and only re-polls *today's*
-  fixtures — light on the Pi and on ESPN;
-- keeps serving the last good copy if a fetch fails, with a "cached" badge;
-- refreshes every ~90s, dropping to ~20s while Scotland are actually playing.
+```bash
+cd backend
+python test_tracker.py
+```
 
-If ESPN ever changes the feed, the drop-in alternative is **API-Football**'s free
-tier (`league=1, season=2026`, 100 req/day, needs a free key) — swap the
-`Fetcher` class in `tracker.py`.
+The test suite runs entirely offline — no network, no API keys. It covers standings tiebreakers, `team_qualifies` edge cases (clinched early, eliminated, third-place boundary), `with_result` model cloning, odds normalisation, and Monte Carlo bucket sums.
 
-## Overhead on the Pi
+---
 
-Negligible. A single uvicorn worker wakes only to serve a page load and refresh a
-cached JSON blob each minute or so — a few MB of RAM, effectively no CPU between
-refreshes. Morning Brief runs as periodic timer bursts, not constant load, so the
-two don't compete. The Pi 3B+ is fine for a tournament-length toy; the EliteDesk
-would be the tidier permanent home once it's provisioned, but no need to wait.
+## Data sources
 
-(Node is only needed to *build* the frontend. If you don't want Node on the Pi,
-build `dist/` on your workstation and copy it over — or use the prebuilt `dist/`
-that ships in this folder.)
+- **Match data:** ESPN's public scoreboard feed (`site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard`) — no API key required. Completed match days are cached to `espn_cache.json` to avoid redundant requests.
+- **Elo probabilities:** [worldcupelo.com](https://worldcupelo.com) `/api/match/{A}/{B}` — no API key required. Responses are cached to `elo_cache.json` for 3 hours.
+
+Both APIs are unofficial and undocumented. If ESPN changes its feed format, the `Fetcher` class in `tracker.py` is the only place to update.
+
+---
+
+## Remote access (Tailscale)
+
+If you're self-hosting on a Raspberry Pi and want to reach it from other devices:
+
+```bash
+# Install Tailscale on the Pi
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+
+# Serve to your tailnet only (private)
+sudo tailscale serve --bg 8080
+# → https://<device-name>.<tailnet>.ts.net
+
+# Or expose publicly with Funnel (enable in admin console first)
+sudo tailscale funnel --bg 8080
+```
+
+---
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).

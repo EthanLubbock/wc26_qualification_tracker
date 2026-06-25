@@ -1,7 +1,7 @@
 """
-tracker.py — World Cup 2026 data layer + Scotland qualification logic.
+tracker.py — World Cup 2026 data layer + qualification logic.
 
-No third-party deps (stdlib only). The Flask app imports WorldCupModel and
+No third-party deps (stdlib only). The FastAPI app imports WorldCupModel and
 analyse(). All numbers are computed from completed match results pulled from
 ESPN's free, unauthenticated scoreboard endpoint, so the third-place table and
 the FIFA tie-breakers are derived here rather than trusted from an opaque feed.
@@ -30,9 +30,10 @@ ESPN_SCOREBOARD = (
 GROUP_STAGE_START = date(2026, 6, 11)
 GROUP_STAGE_END = date(2026, 6, 27)
 THIRDS_ADVANCING = 8          # best 8 of 12 third-placed teams reach the Round of 32
-OUR_TEAM = "SCO"
-OUR_GROUP = "C"
+ASSUMED_MARGIN = 1            # goal margin used in hypothetical win/loss scenarios
 HTTP_TIMEOUT = 8              # seconds
+
+QUALIFY_OUTCOMES = ("win_group", "runner_up", "third_in", "third_out", "fourth_out")
 
 
 def group_stage_dates() -> list[str]:
@@ -122,7 +123,7 @@ class Fetcher:
 
     def _fetch_day(self, day: str) -> list:
         url = f"{ESPN_SCOREBOARD}?dates={day}&limit=200"
-        req = urllib.request.Request(url, headers={"User-Agent": "scotland-wc/1.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "wc-tracker/1.0"})
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return data.get("events", [])
@@ -291,96 +292,162 @@ def _h2h_key(team: TeamRow, block: list[TeamRow]):
     return (pts, gd, gf, team.gd, team.gf)
 
 
-# --- Scotland scenario analysis ------------------------------------------
+# --- shared classifier (used by both Step 1 scenarios and Step 2 simulation) ---
 
-def _rank_with_candidate(thirds_without_c: list[dict], candidate: dict) -> tuple[int, list[dict]]:
-    table = thirds_without_c + [candidate]
-    table.sort(key=lambda d: (d["points"], d["gd"], d["gf"]), reverse=True)
-    pos = next(i for i, d in enumerate(table) if d.get("is_scotland")) + 1
-    return pos, table
+def team_qualifies(model: WorldCupModel, target: str) -> str:
+    """Classify target's fate assuming all group games in model are final.
+
+    Returns one of QUALIFY_OUTCOMES. Safe to call on provisional models
+    (groups still in progress); callers decide how much to trust the result.
+    """
+    group = model.teams[target].group
+    order = model.groups()[group]
+    pos = [t.abbr for t in order].index(target) + 1
+    if pos == 1:
+        return "win_group"
+    if pos == 2:
+        return "runner_up"
+    if pos == 3:
+        thirds = model.third_placed()
+        rank = next(i for i, t in enumerate(thirds) if t["abbr"] == target) + 1
+        return "third_in" if rank <= THIRDS_ADVANCING else "third_out"
+    return "fourth_out"
 
 
-def analyse(model: WorldCupModel) -> dict:
-    teams = model.teams
-    sco = teams.get(OUR_TEAM)
-    sco_match = next(
-        (m for m in model.matches
-         if m.group == OUR_GROUP and OUR_TEAM in (m.home, m.away)
-         and not m.finished),
-        None,
-    )
-    # Scotland's *finished* match in this round (if any) — for the live/post phase.
-    sco_match_done = next(
-        (m for m in model.matches
-         if m.group == OUR_GROUP and OUR_TEAM in (m.home, m.away) and m.finished
-         and ("BRA" in (m.home, m.away))),
-        None,
-    )
+def with_result(model: WorldCupModel, match: Match, home_goals: int, away_goals: int) -> WorldCupModel:
+    """Return a new WorldCupModel with match resolved to the given score."""
+    new_matches = []
+    for m in model.matches:
+        if id(m) == id(match):
+            new_matches.append(Match(
+                group=m.group, home=m.home, away=m.away,
+                home_score=home_goals, away_score=away_goals,
+                state="post", completed=True,
+                kickoff=m.kickoff, home_name=m.home_name, away_name=m.away_name,
+            ))
+        else:
+            new_matches.append(m)
+    return WorldCupModel(new_matches)
 
-    phase = "pre"
-    if sco_match_done:
-        phase = "post"
-    elif sco_match and sco_match.state == "in":
-        phase = "live"
 
-    cur_pts = sco.points if sco else 3
-    cur_gd = sco.gd if sco else 0
-    cur_gf = sco.gf if sco else 1
+# --- scenario helpers --------------------------------------------------------
 
-    thirds_other = model.third_placed(exclude={OUR_GROUP})
-
-    def scenario(extra_pts: int, extra_gd: int, label: str, note: str):
-        cand = {
-            "abbr": OUR_TEAM, "name": "Scotland", "group": OUR_GROUP,
-            "points": cur_pts + extra_pts, "gd": cur_gd + extra_gd,
-            "gf": cur_gf + max(extra_gd, 0), "is_scotland": True,
-            "group_complete": True,
-        }
-        pos, table = _rank_with_candidate([d.copy() for d in thirds_other], cand)
+def _hypothetical_scores(match: Match, target: str) -> dict[str, tuple[int, int]]:
+    """Return (home_goals, away_goals) for win/draw/loss from target's perspective."""
+    target_is_home = match.home == target
+    if target_is_home:
         return {
-            "label": label, "note": note,
-            "sco_points": cand["points"], "sco_gd": cand["gd"],
-            "third_rank": pos, "in_top8": pos <= THIRDS_ADVANCING,
-            "cutoff": THIRDS_ADVANCING, "field_size": len(table),
-            "table": table,
+            "win":  (ASSUMED_MARGIN, 0),
+            "draw": (1, 1),
+            "loss": (0, ASSUMED_MARGIN),
+        }
+    return {
+        "win":  (0, ASSUMED_MARGIN),
+        "draw": (1, 1),
+        "loss": (ASSUMED_MARGIN, 0),
+    }
+
+
+def _third_rank_if_applicable(model: WorldCupModel, target: str) -> int | None:
+    """Return target's 1-based rank among thirds only when target is currently 3rd."""
+    group = model.teams[target].group
+    order = model.groups().get(group, [])
+    if not order or [t.abbr for t in order].index(target) + 1 != 3:
+        return None
+    thirds = model.third_placed()
+    try:
+        return next(i for i, t in enumerate(thirds) if t["abbr"] == target) + 1
+    except StopIteration:
+        return None
+
+
+def _all_same_qualified(outcomes: dict) -> bool:
+    qualified = {"win_group", "runner_up", "third_in"}
+    return all(o["verdict"] in qualified for o in outcomes.values())
+
+
+def _all_eliminated(outcomes: dict) -> bool:
+    eliminated = {"third_out", "fourth_out"}
+    return all(o["verdict"] in eliminated for o in outcomes.values())
+
+
+def target_scenarios(model: WorldCupModel, target: str) -> dict:
+    """Return scenario structure for target team — works for all four states:
+    already through, already out, pending match, or fully played."""
+    group = model.teams[target].group
+    remaining = [
+        m for m in model.matches
+        if not m.finished and m.group == group and target in (m.home, m.away)
+    ]
+
+    if not remaining:
+        return {
+            "phase": "final",
+            "verdict": team_qualifies(model, target),
+            "third_rank": _third_rank_if_applicable(model, target),
         }
 
-    # Win: top-2 guaranteed regardless of the Morocco–Haiti result (see README maths).
-    win = {
-        "label": "Win",
-        "outcome": "QUALIFIED",
-        "detail": "Beat Brazil and Scotland finish top-two in Group C — straight "
-                  "into the Round of 32. No other results matter.",
+    outcomes = {}
+    for label, (hg, ag) in _hypothetical_scores(remaining[0], target).items():
+        hypo = with_result(model, remaining[0], hg, ag)
+        outcomes[label] = {
+            "verdict": team_qualifies(hypo, target),
+            "third_rank": _third_rank_if_applicable(hypo, target),
+            "assumed": label in ("win", "loss"),
+        }
+
+    return {
+        "phase": "pending",
+        "remaining": _match_view(remaining[0]),
+        "outcomes": outcomes,
+        "clinched": _all_same_qualified(outcomes),
+        "dead": _all_eliminated(outcomes),
     }
-    # Draw: Scotland finish 3rd on 4 pts (lose the head-to-head with Morocco), GD unchanged.
-    draw = scenario(
-        extra_pts=1, extra_gd=0, label="Draw",
-        note="A draw leaves Scotland 3rd in Group C on 4 points (Morocco hold the "
-             "head-to-head). Goal difference is unchanged by a draw, so it comes "
-             "down to the 12-team third-place table below.",
+
+
+# --- main analysis entry point -----------------------------------------------
+
+def analyse(model: WorldCupModel, target: str) -> dict:
+    if target not in model.teams:
+        raise KeyError(f"Unknown team abbreviation: {target!r}")
+
+    group = model.teams[target].group
+    target_match = next(
+        (m for m in model.matches
+         if not m.finished and m.group == group and target in (m.home, m.away)),
+        None,
     )
-    # Lose: Scotland stay 3rd on 3 pts; GD assumes a one-goal defeat (best realistic case).
-    lose = scenario(
-        extra_pts=0, extra_gd=-1, label="Lose",
-        note="A defeat leaves Scotland 3rd on 3 points. This row assumes a one-goal "
-             "loss; a heavier defeat lowers the goal difference and the ranking. "
-             "Eight of twelve third-placed teams go through, so 3 points can still "
-             "be enough — it depends on the table below.",
+    other_match = next(
+        (m for m in model.matches
+         if m.group == group and target not in (m.home, m.away)),
+        None,
+    )
+    live = any(
+        m.state == "in" and m.group == group and target in (m.home, m.away)
+        for m in model.matches
     )
 
     return {
         "generated": time.strftime("%Y-%m-%d %H:%M:%S %Z"),
-        "phase": phase,
-        "scotland_now": sco.as_dict() if sco else None,
-        "group_c": [t.as_dict() for t in model.groups().get(OUR_GROUP, [])],
-        "sco_match": _match_view(sco_match or sco_match_done),
-        "other_c_match": _other_group_c_match(model),
-        "scenarios": {"win": win, "draw": draw, "lose": lose},
+        "live": live,
+        "target": target,
+        "group": group,
+        "group_table": [t.as_dict() for t in model.groups().get(group, [])],
+        "target_match": _match_view(target_match),
+        "other_group_match": _match_view(other_match),
+        "scenarios": target_scenarios(model, target),
         "live_thirds": model.third_placed(),
         "cutoff": THIRDS_ADVANCING,
-        "note_tiebreak": "Ranking uses points, goal difference, then goals scored. "
-                         "FIFA's further tie-breakers (fair-play score, then world "
-                         "ranking) aren't in the free feed and only bite on an exact tie.",
+        "all_teams": sorted(
+            [{"abbr": t.abbr, "name": t.name, "group": t.group}
+             for t in model.teams.values()],
+            key=lambda t: (t["group"], t["abbr"]),
+        ),
+        "note_tiebreak": (
+            "Ranking uses points, goal difference, then goals scored. "
+            "FIFA's further tie-breakers (fair-play score, then world ranking) "
+            "aren't in the free feed and only bite on an exact tie."
+        ),
     }
 
 
@@ -395,14 +462,9 @@ def _match_view(m: Match | None) -> dict | None:
     }
 
 
-def _other_group_c_match(model: WorldCupModel) -> dict | None:
-    m = next((m for m in model.matches
-              if m.group == OUR_GROUP and OUR_TEAM not in (m.home, m.away)
-              and {"MAR", "HAI"} <= {m.home, m.away}), None)
-    return _match_view(m)
+def build_model(fetcher: Fetcher) -> WorldCupModel:
+    return WorldCupModel(parse_matches(fetcher.all_events()))
 
 
-def build_state(fetcher: Fetcher) -> dict:
-    events = fetcher.all_events()
-    model = WorldCupModel(parse_matches(events))
-    return analyse(model)
+def build_state(fetcher: Fetcher, target: str) -> dict:
+    return analyse(build_model(fetcher), target)
