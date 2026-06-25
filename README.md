@@ -42,7 +42,7 @@ wc2026-tracker/
     index.html
     package.json
     vite.config.js
-  scotland-wc.service        systemd unit (template — edit paths before use)
+  wc26.service        systemd unit (template — edit paths before use)
 ```
 
 The backend serves `frontend/dist/` directly, so in production it is one process on one port. In development Vite's dev server runs separately and proxies `/api` calls to the backend.
@@ -115,13 +115,13 @@ If you don't have Node available on the production machine, build `dist/` on a d
 
 ### Running as a systemd service (Linux / Raspberry Pi)
 
-Edit `scotland-wc.service` (update `User`, `WorkingDirectory`, and `ExecStart` paths to match your setup), then:
+Edit `wc26.service` (update `User`, `WorkingDirectory`, and `ExecStart` paths to match your setup), then:
 
 ```bash
-sudo cp scotland-wc.service /etc/systemd/system/
+sudo cp wc26.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now scotland-wc
-journalctl -u scotland-wc -f
+sudo systemctl enable --now wc26.service
+journalctl -u wc26.service -f
 ```
 
 ---

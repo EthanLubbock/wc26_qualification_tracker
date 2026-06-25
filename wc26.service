@@ -1,15 +1,15 @@
 [Unit]
-Description=Scotland World Cup tracker (FastAPI)
+Description=World Cup tracker (FastAPI)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 # --- edit User + paths for your Pi ---
-User=ethan
-WorkingDirectory=/home/ethan/scotland-wc/backend
+User=<your-user>
+WorkingDirectory=/home/<your-user>/wc26_qualification_tracker/backend
 # Serves /api/* and the built frontend/dist on :8080.
-ExecStart=/home/ethan/scotland-wc/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8080
+ExecStart=/home/<your-user>/wc26_qualification_tracker/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8080
 Restart=on-failure
 RestartSec=5
 # espn_cache.json is written in WorkingDirectory; keep it writable.
