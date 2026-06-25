@@ -42,6 +42,53 @@ def _outcome_label(hg: int, ag: int, home: str, away: str,
     return "draw"
 
 
+def _third_place_path_matches(
+    model: WorldCupModel, target: str, target_group: str, unplayed: list[Match]
+) -> list[Match]:
+    """For a team that has finished playing, return the most impactful unplayed
+    other-group matches for third-place qualification path tracking.
+
+    Only applies when the target is currently 3rd in their group. Picks the
+    two other groups whose 3rd-placed teams are closest (in points) to the
+    target — the groups most likely to change their rank among thirds.
+    """
+    group_rows = model.groups().get(target_group, [])
+    target_idx = next((i for i, t in enumerate(group_rows) if t.abbr == target), None)
+    if target_idx != 2:
+        return []  # not 3rd — qualifies directly or can't qualify via thirds
+
+    target_pts = group_rows[2].points
+
+    # Gather unplayed matches keyed by group
+    other_by_group: dict[str, list[Match]] = {}
+    for m in unplayed:
+        if m.group != target_group:
+            other_by_group.setdefault(m.group, []).append(m)
+
+    if not other_by_group:
+        return []
+
+    # Score relevance: groups whose 3rd can still affect whether target makes top 8.
+    # A group's 3rd is relevant if their max achievable points >= target's points.
+    scored: list[tuple[int, str, list[Match]]] = []
+    for group_name, matches in other_by_group.items():
+        rows = model.groups().get(group_name, [])
+        if len(rows) < 3:
+            continue
+        third = rows[2]
+        max_pts = third.points + 3 * len(matches)
+        if max_pts < target_pts:
+            continue  # can never reach target — irrelevant
+        closeness = -abs(third.points - target_pts)
+        scored.append((closeness, group_name, matches))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    result: list[Match] = []
+    for _, _, matches in scored[:2]:   # at most 2 groups → ≤4 matches → 3^4=81 combos
+        result.extend(matches)
+    return result
+
+
 def _poisson_sample(lam: float) -> int:
     """Sample from Poisson(lam) using Knuth's algorithm. Pure stdlib."""
     l = math.exp(-lam)
@@ -106,11 +153,16 @@ def qualification_probability(
     # Pre-fetch all odds ONCE outside the loop — must never hit network inside.
     probs = {id(m): odds.match_probabilities(m.home, m.away) for m in unplayed}
 
-    # Collect group matches for path tracking; target's own match first.
+    # Determine which matches to track for path analysis.
+    # Teams still playing → own group matches.
+    # Teams that have finished → most impactful other-group matches (third-place race).
     target_group = model.teams[target].group
     group_unplayed = sorted(
         [m for m in unplayed if m.group == target_group],
         key=lambda m: (0 if target in (m.home, m.away) else 1),
+    )
+    path_matches = group_unplayed or _third_place_path_matches(
+        model, target, target_group, unplayed
     )
 
     counts: Counter = Counter()
@@ -120,14 +172,14 @@ def qualification_probability(
         sim = _apply_all(model, unplayed, results)
         outcome = team_qualifies(sim, target)
         counts[outcome] += 1
-        if outcome in _QUALIFY_SET and group_unplayed:
+        if outcome in _QUALIFY_SET and path_matches:
             path_key = tuple(
                 _outcome_label(
                     results[id(m)][0], results[id(m)][1],
                     m.home, m.away, m.home_name, m.away_name,
                     target,
                 )
-                for m in group_unplayed
+                for m in path_matches
             )
             path_counts[path_key] += 1
         if collect is not None:
@@ -142,14 +194,15 @@ def qualification_probability(
     ) / total
     buckets["samples"] = total
 
-    # Top qualifying paths: each step is the result of one unplayed group match.
+    # Top qualifying paths: each step is one tracked match result.
     match_meta = [
         {
+            "group": m.group,
             "home_name": m.home_name or m.home,
             "away_name": m.away_name or m.away,
             "is_target": target in (m.home, m.away),
         }
-        for m in group_unplayed
+        for m in path_matches
     ]
     top_paths = []
     for path_key, count in path_counts.most_common(3):
