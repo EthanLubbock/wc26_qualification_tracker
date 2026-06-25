@@ -66,6 +66,24 @@ body{margin:0;background:
 .panel .sub{font-size:13px;color:var(--muted)}
 .panel .note{font-size:12.5px;color:var(--paper);opacity:.78}
 
+/* likelihood / probability block */
+.likelihood{background:var(--navy-800);border:1px solid var(--navy-700);border-radius:14px;
+            padding:16px 18px;margin-bottom:18px}
+.likelihood-head{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+.likelihood-big{font-family:var(--disp);font-weight:800;font-size:clamp(28px,6vw,42px);
+                line-height:1;color:var(--green)}
+.likelihood-label{font-family:var(--disp);font-weight:600;font-size:15px;
+                  letter-spacing:.04em;color:var(--paper);opacity:.82}
+.likelihood-bar{display:flex;height:10px;border-radius:999px;overflow:hidden;
+                background:var(--navy-700);margin-bottom:10px;gap:2px}
+.likelihood-bar > div{border-radius:999px;transition:width .4s ease}
+.likelihood-legend{display:flex;flex-wrap:wrap;gap:8px 16px;margin-bottom:8px}
+.likelihood-seg{display:flex;align-items:center;gap:5px;font-size:13px;color:var(--paper);
+                opacity:.82}
+.likelihood-swatch{display:inline-block;width:10px;height:10px;border-radius:3px;
+                   flex-shrink:0}
+.likelihood-note{font-size:12px;color:var(--muted);margin-top:4px}
+
 h2.section{font-family:var(--disp);text-transform:uppercase;letter-spacing:.14em;
            font-size:14px;color:var(--muted);margin:6px 0 10px;font-weight:600}
 table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
