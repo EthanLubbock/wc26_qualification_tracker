@@ -14,8 +14,11 @@ body{margin:0;background:
 .eyebrow{font-family:var(--disp);text-transform:uppercase;letter-spacing:.18em;
          font-weight:600;font-size:13px;color:var(--muted);display:flex;
          justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-.stamp{font-variant-numeric:tabular-nums;font-size:11px;letter-spacing:.08em}
+.stamp{font-variant-numeric:tabular-nums;font-size:11px;letter-spacing:.08em;display:flex;align-items:center;gap:5px}
 .stamp.stale{color:var(--amber)}
+.spinner{display:inline-block;width:9px;height:9px;border:1.5px solid var(--navy-600);
+         border-top-color:var(--saltire);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
 
 /* verdict band — the signature element */
 .verdict{position:relative;overflow:hidden;border-radius:16px;margin:14px 0 18px;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { signed } from './helpers.js'
 import Verdict from './components/Verdict.jsx'
 import Scores from './components/Scores.jsx'
@@ -57,16 +57,33 @@ export default function App() {
   const [team, setTeam] = useState('SCO')
   const [state, setState] = useState(null)
   const [connErr, setConnErr] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const cacheRef = useRef(new Map())
 
   useEffect(() => {
     let alive = true
+    let isFirst = true
+
+    if (cacheRef.current.has(team)) {
+      setState(cacheRef.current.get(team))
+    }
+    setLoading(true)
+
     const tick = async () => {
       try {
         const res = await fetch(`/api/state?team=${team}`, { cache: 'no-store' })
         const s = await res.json()
-        if (alive) { setState(s); setConnErr(false) }
+        if (alive) {
+          cacheRef.current.set(team, s)
+          setState(s)
+          setConnErr(false)
+          if (isFirst) { setLoading(false); isFirst = false }
+        }
       } catch {
-        if (alive) setConnErr(true)
+        if (alive) {
+          setConnErr(true)
+          if (isFirst) { setLoading(false); isFirst = false }
+        }
       }
     }
     tick()
@@ -74,7 +91,8 @@ export default function App() {
     return () => { alive = false; clearInterval(id) }
   }, [team])
 
-  const stamp = connErr ? 'connection error'
+  const stamp = loading && !state ? 'loading…'
+    : connErr ? 'connection error'
     : state ? (state.stale ? '⚠ cached · ' : '') + 'updated ' + (state.generated || '')
     : 'loading…'
 
@@ -84,7 +102,10 @@ export default function App() {
     <div className="wrap">
       <div className="eyebrow">
         <TeamSelect allTeams={state?.all_teams} team={team} onChange={setTeam} />
-        <span className={`stamp ${(connErr || state?.stale) ? 'stale' : ''}`}>{stamp}</span>
+        <span className={`stamp ${(connErr || state?.stale) ? 'stale' : ''}`}>
+          {loading && state && <span className="spinner" aria-hidden="true" />}
+          {stamp}
+        </span>
       </div>
 
       {state?.stale && (
