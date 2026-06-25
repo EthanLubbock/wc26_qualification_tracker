@@ -87,6 +87,23 @@ body{margin:0;background:
                    flex-shrink:0}
 .likelihood-note{font-size:12px;color:var(--muted);margin-top:4px}
 
+/* qualifying paths */
+.paths{margin-bottom:18px}
+.path-row{display:flex;align-items:center;gap:10px;padding:7px 2px;
+          border-bottom:1px solid rgba(20,50,87,.4);font-size:14px}
+.path-row:last-child{border-bottom:none}
+.path-rank{font-family:var(--disp);font-weight:600;color:var(--muted);
+           font-size:12px;min-width:14px;flex-shrink:0}
+.path-steps{flex:1;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.path-step{display:inline-flex;align-items:center;gap:6px}
+.path-sep{color:var(--muted);font-size:12px}
+.path-outcome{font-weight:600;color:var(--paper)}
+.path-outcome.path-win{color:var(--green)}
+.path-outcome.path-draw{color:var(--amber)}
+.path-outcome.path-lose{color:var(--red)}
+.path-pct{font-family:var(--disp);font-weight:700;font-size:13px;
+          color:var(--muted);min-width:30px;text-align:right;white-space:nowrap;flex-shrink:0}
+
 h2.section{font-family:var(--disp);text-transform:uppercase;letter-spacing:.14em;
            font-size:14px;color:var(--muted);margin:6px 0 10px;font-weight:600}
 table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}

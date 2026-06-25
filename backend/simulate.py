@@ -22,6 +22,24 @@ from tracker import Match, WorldCupModel, team_qualifies, QUALIFY_OUTCOMES
 
 MEAN_TOTAL_GOALS = 2.6   # tournament average; tunable
 DEFAULT_SAMPLES = 5000
+_QUALIFY_SET = {"win_group", "runner_up", "third_in"}
+
+
+def _outcome_label(hg: int, ag: int, home: str, away: str,
+                   home_name: str | None, away_name: str | None,
+                   target: str) -> str:
+    """Short result label, framed from target's perspective when involved."""
+    hn = home_name or home
+    an = away_name or away
+    if target in (home, away):
+        if hg == ag:
+            return "draw"
+        return "win" if (hg > ag) == (target == home) else "lose"
+    if hg > ag:
+        return f"{hn} win"
+    if hg < ag:
+        return f"{an} win"
+    return "draw"
 
 
 def _poisson_sample(lam: float) -> int:
@@ -88,12 +106,30 @@ def qualification_probability(
     # Pre-fetch all odds ONCE outside the loop — must never hit network inside.
     probs = {id(m): odds.match_probabilities(m.home, m.away) for m in unplayed}
 
+    # Collect group matches for path tracking; target's own match first.
+    target_group = model.teams[target].group
+    group_unplayed = sorted(
+        [m for m in unplayed if m.group == target_group],
+        key=lambda m: (0 if target in (m.home, m.away) else 1),
+    )
+
     counts: Counter = Counter()
+    path_counts: Counter = Counter()
     for _ in range(n):
         results = {id(m): _sample_scoreline(probs[id(m)]) for m in unplayed}
         sim = _apply_all(model, unplayed, results)
         outcome = team_qualifies(sim, target)
         counts[outcome] += 1
+        if outcome in _QUALIFY_SET and group_unplayed:
+            path_key = tuple(
+                _outcome_label(
+                    results[id(m)][0], results[id(m)][1],
+                    m.home, m.away, m.home_name, m.away_name,
+                    target,
+                )
+                for m in group_unplayed
+            )
+            path_counts[path_key] += 1
         if collect is not None:
             collect(sim, target)
 
@@ -105,4 +141,25 @@ def qualification_probability(
         counts.get("third_in", 0)
     ) / total
     buckets["samples"] = total
+
+    # Top qualifying paths: each step is the result of one unplayed group match.
+    match_meta = [
+        {
+            "home_name": m.home_name or m.home,
+            "away_name": m.away_name or m.away,
+            "is_target": target in (m.home, m.away),
+        }
+        for m in group_unplayed
+    ]
+    top_paths = []
+    for path_key, count in path_counts.most_common(3):
+        top_paths.append({
+            "probability": count / total,
+            "steps": [
+                {**meta, "outcome": label}
+                for meta, label in zip(match_meta, path_key)
+            ],
+        })
+    buckets["top_paths"] = top_paths
+
     return buckets
