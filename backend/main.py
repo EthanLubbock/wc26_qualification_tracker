@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 from tracker import Fetcher, build_model, analyse
 from odds import EloOdds, NeutralOdds
-from simulate import qualification_probability
+from qualify import qualification_probability
 
 TTL_DEFAULT = 90      # seconds between refreshes normally
 TTL_LIVE = 20         # seconds while the target team's match is live

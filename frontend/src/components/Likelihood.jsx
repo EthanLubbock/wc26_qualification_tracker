@@ -49,7 +49,7 @@ export default function Likelihood({ qualification }) {
       </div>
 
       <div className="likelihood-note">
-        Based on {q.samples?.toLocaleString()} simulations · Elo strength model
+        Exact calculation · Elo strength model
       </div>
     </div>
   )

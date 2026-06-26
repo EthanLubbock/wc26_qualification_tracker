@@ -11,7 +11,8 @@ A self-hosted app that follows any team's path through the 2026 FIFA World Cup g
 - **Any team, any group** — dropdown lists all 48 teams organised by group letter; switching teams triggers an immediate update
 - **Live score integration** — polls ESPN's public scoreboard feed; refreshes every 90 s, drops to 20 s while the selected team's match is live
 - **Scenario analysis** — shows win / draw / loss verdicts for the next match, including where the team lands in the 12-group third-place table under each outcome
-- **Qualification probability** — Monte Carlo simulation (5 000 samples) using Elo-based win/draw/loss probabilities and Poisson goal modelling, displayed as an overall percentage and a stacked breakdown by finishing position
+- **Qualification probability** — exact calculation (no Monte Carlo) using Elo-based win/draw/loss probabilities and Poisson goal modelling, displayed as an overall percentage and a stacked breakdown by finishing position
+- **Important-games requirements** — for a third-place path, names only the games whose result actually decides the team's fate and how many of them must go its way (e.g. "need at least 4 of these"), with goal-margin detail where a group has a single deciding match
 - **Third-place tracker** — live ranking of all 12 groups' third-placed teams; the top 8 advance to the Round of 32
 - **Offline resilience** — serves the last good fetch with a "cached" badge if ESPN is unreachable
 
@@ -25,7 +26,7 @@ wc2026-tracker/
     main.py          FastAPI app — /api/state, /healthz, serves built frontend
     tracker.py       Standings, tiebreakers, scenario logic (stdlib only)
     odds.py          OddsProvider, NeutralOdds, EloOdds (worldcupelo.com)
-    simulate.py      Monte Carlo qualification_probability
+    qualify.py       Exact qualification_probability + requirements engine
     test_tracker.py  Offline test suite (no network)
     requirements.txt
   frontend/
@@ -59,14 +60,17 @@ The app implements the full FIFA tiebreaker chain — head-to-head record, overa
 
 ## Probability model
 
-When a team still has matches to play, the app runs a Monte Carlo simulation:
+Group-stage groups are independent (no cross-group matches), so qualification is computed **exactly** rather than sampled:
 
-1. For each unplayed match, fetch win/draw/loss probabilities and expected goal supremacy from [worldcupelo.com](https://worldcupelo.com) (keyless API).
-2. Sample a scoreline for every unplayed match using a Poisson model calibrated to the Elo supremacy estimate.
-3. Apply all sampled results to the group tables and run the full tiebreaker/thirds logic.
-4. Repeat 5 000 times; count how often the target team finishes in each position.
+```
+P(qualify) = P(win group) + P(runner-up) + P(3rd AND among the best 8 thirds)
+```
 
-The result is shown as a percentage chance of qualification with a colour-coded breakdown by finishing path (win group / runner-up / via thirds / eliminated).
+1. For each unplayed match, fetch win/draw/loss probabilities and expected goal supremacy from [worldcupelo.com](https://worldcupelo.com) (keyless API), and turn the supremacy into a Poisson scoreline distribution.
+2. Enumerate each group's remaining matches to get the exact distribution of that group's finishing positions and records (the full FIFA tiebreaker/thirds logic is applied per group).
+3. To finish among the best 8 thirds the team needs at least *k* of the other 11 groups to produce a third with a worse record. Each such group is an independent event; "at least *k* of them" is a **Poisson-binomial** tail, computed exactly.
+
+The result is shown as a percentage chance of qualification with a colour-coded breakdown by finishing path (win group / runner-up / via thirds / eliminated), plus the **list of games that actually decide the third-place path** and how many must go the team's way.
 
 Set `ODDS=neutral` to use flat 40/20/40 probabilities instead of Elo (useful for testing or if worldcupelo.com is unreachable).
 
@@ -162,7 +166,7 @@ cd backend
 python test_tracker.py
 ```
 
-The test suite runs entirely offline — no network, no API keys. It covers standings tiebreakers, `team_qualifies` edge cases (clinched early, eliminated, third-place boundary), `with_result` model cloning, odds normalisation, and Monte Carlo bucket sums.
+The test suite runs entirely offline — no network, no API keys. It covers standings tiebreakers, `team_qualifies` edge cases (clinched early, eliminated, third-place boundary), `with_result` model cloning, odds normalisation, the Poisson-binomial tail, scoreline distributions, exact qualification bucket sums, and that the requirements engine lists only the genuinely pivotal groups.
 
 ---
 

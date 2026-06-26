@@ -5,7 +5,7 @@ import Scores from './components/Scores.jsx'
 import Scenarios from './components/Scenarios.jsx'
 import Ladder from './components/Ladder.jsx'
 import Likelihood from './components/Likelihood.jsx'
-import Paths from './components/Paths.jsx'
+import Requirements from './components/Requirements.jsx'
 
 const POLL_MS = 25000
 
@@ -119,7 +119,7 @@ export default function App() {
         <>
           <Verdict state={state} />
           <Likelihood qualification={state.qualification} />
-          <Paths paths={state.qualification?.top_paths} scenarios={state.scenarios} />
+          <Requirements requirements={state.qualification?.requirements} scenarios={state.scenarios} />
           <Scores state={state} />
 
           <h2 className="section">

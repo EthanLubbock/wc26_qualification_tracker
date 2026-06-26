@@ -250,35 +250,118 @@ print("EloOdds unknown code falls back gracefully: PASS")
 
 
 # ---------------------------------------------------------------------------
-# Simulate tests (fixed seed, small n).
+# Qualification engine tests (exact, deterministic — no Monte Carlo).
 # ---------------------------------------------------------------------------
 
-import random as _random
-from simulate import qualification_probability, QUALIFY_OUTCOMES as SIM_OUTCOMES
+from qualify import (
+    qualification_probability, _pb_at_least, _match_scoreline_dist,
+    QUALIFY_OUTCOMES as SIM_OUTCOMES,
+)
 
-_random.seed(42)
 
-# Team that has already qualified (no unplayed matches) — deterministic result.
-sim_result = qualification_probability(model_e, "ENG", NeutralOdds(), n=100)
-assert sim_result["qualify"] == 1.0, sim_result
-assert abs(sum(sim_result[k] for k in SIM_OUTCOMES) - 1.0) < 1e-9, sim_result
-assert sim_result["samples"] == 100
-print(f"Simulate: ENG (won group, no unplayed) qualify={sim_result['qualify']}: PASS")
+# Poisson-binomial tail: known small cases.
+assert _pb_at_least([], 0) == 1.0
+assert _pb_at_least([0.5, 0.5], 0) == 1.0
+assert abs(_pb_at_least([0.5, 0.5], 1) - 0.75) < 1e-12       # P(>=1) = 1 - .25
+assert abs(_pb_at_least([0.5, 0.5], 2) - 0.25) < 1e-12       # both succeed
+assert _pb_at_least([0.5, 0.5], 3) == 0.0                    # k > n
+assert abs(_pb_at_least([0.2, 0.3, 0.4], 1)
+           - (1 - 0.8 * 0.7 * 0.6)) < 1e-12
+print("Poisson-binomial tail: PASS")
 
-# Buckets sum to 1 with unplayed matches.
-_random.seed(42)
-sim_sco = qualification_probability(model_a, "SCO", NeutralOdds(), n=200)
-assert abs(sum(sim_sco[k] for k in SIM_OUTCOMES) - 1.0) < 1e-9, sim_sco
-assert 0.0 <= sim_sco["qualify"] <= 1.0
-print(f"Simulate: SCO (pending) qualify~={sim_sco['qualify']:.2f}, buckets sum to 1: PASS")
 
-# collect callback is invoked.
-collected = []
-_random.seed(42)
-qualification_probability(model_a, "SCO", NeutralOdds(), n=10,
-                          collect=lambda sim, t: collected.append(t))
-assert len(collected) == 10
-print("Simulate: collect callback invoked 10 times: PASS")
+# Per-match scoreline distribution sums to 1; supremacy shifts the expected margin.
+class _StubOdds:
+    def __init__(self, sup):
+        self.sup = sup
+    def match_probabilities(self, home, away):
+        return {"p_a": 0.4, "p_draw": 0.2, "p_b": 0.4, "supremacy": self.sup}
+
+_m = M("Z", "HH", "AA", None, None, finished=False)
+d_even = _match_scoreline_dist(_StubOdds(0.0), _m)
+d_home = _match_scoreline_dist(_StubOdds(1.5), _m)
+assert abs(sum(d_even.values()) - 1.0) < 1e-9
+assert abs(sum(d_home.values()) - 1.0) < 1e-9
+exp_margin = lambda d: sum((hg - ag) * p for (hg, ag), p in d.items())
+assert abs(exp_margin(d_even)) < 1e-6, exp_margin(d_even)
+assert exp_margin(d_home) > 0.9, exp_margin(d_home)   # home supremacy → positive margin
+print("Scoreline distribution: PASS")
+
+
+# Team already qualified (won group, no unplayed) — deterministic, exact.
+q_eng = qualification_probability(model_e, "ENG", NeutralOdds())
+assert q_eng["qualify"] == 1.0, q_eng
+assert q_eng["win_group"] == 1.0, q_eng
+assert abs(sum(q_eng[k] for k in SIM_OUTCOMES) - 1.0) < 1e-9, q_eng
+assert q_eng["requirements"] is None, q_eng       # no third-place decision
+print(f"Qualify: ENG (won group) qualify={q_eng['qualify']}, requirements=None: PASS")
+
+
+# Eliminated team — qualify 0, no requirements.
+q_arg = qualification_probability(model_c, "ARG", NeutralOdds())
+assert q_arg["qualify"] == 0.0, q_arg
+assert q_arg["fourth_out"] == 1.0, q_arg
+print(f"Qualify: ARG (eliminated) qualify={q_arg['qualify']}: PASS")
+
+
+# Buckets sum to 1 with unplayed matches (SCO pending).
+q_sco = qualification_probability(model_a, "SCO", NeutralOdds())
+assert abs(sum(q_sco[k] for k in SIM_OUTCOMES) - 1.0) < 1e-9, q_sco
+assert abs(q_sco["qualify"]
+           - (q_sco["win_group"] + q_sco["runner_up"] + q_sco["third_in"])) < 1e-12
+assert 0.0 <= q_sco["qualify"] <= 1.0
+# Only 5 groups in fixture A → fewer than THIRDS_ADVANCING thirds, so any 3rd is in.
+assert q_sco["third_out"] < 1e-9, q_sco
+print(f"Qualify: SCO (pending) qualify={q_sco['qualify']:.3f}, buckets sum to 1: PASS")
+
+
+# ---------------------------------------------------------------------------
+# Fixture F: third-place requirements name only the pivotal group.
+#
+# TGT has finished 3rd in group P3 on 3 pts, GD 0, GF 2. Of the other 11 groups
+# (12 total), 10 are complete with thirds already BELOW TGT (settled-favourable),
+# and ONE group still has its final match to play and decides whether its third
+# finishes above or below TGT. With cutoff 8 and 11 other groups, k = 4. Ten
+# settled-below leaves need = 0 here — but the contested group must still appear
+# in requirements.groups, while the settled groups must NOT.
+# ---------------------------------------------------------------------------
+
+def _weak_complete_third(g):
+    """Complete group whose 3rd finishes 1 pt, GD -3, GF 1 (well below TGT)."""
+    return [
+        M(g, f"{g}W", f"{g}R", 3, 0), M(g, f"{g}T", f"{g}L", 1, 1),
+        M(g, f"{g}W", f"{g}T", 2, 0), M(g, f"{g}R", f"{g}L", 2, 0),
+        M(g, f"{g}T", f"{g}R", 0, 2), M(g, f"{g}W", f"{g}L", 2, 0),
+    ]
+
+matches_f = [
+    # Group P3 — TGT finished 3rd on 3 pts, GD 0, GF 2.
+    M("P3", "WIN", "TGT", 2, 1), M("P3", "TWO", "LOW", 1, 0),
+    M("P3", "WIN", "TWO", 1, 0), M("P3", "TGT", "LOW", 1, 0),
+    M("P3", "WIN", "LOW", 3, 0), M("P3", "TWO", "TGT", 1, 0),
+    # One contested group Q3 — final match CON vs DEC still to play; its third's
+    # fate vs TGT depends on that result.
+    M("Q3", "QA", "QB", 2, 0), M("Q3", "QC", "QD", 0, 0),
+    M("Q3", "QA", "QC", 1, 0), M("Q3", "QB", "QD", 2, 0),
+    M("Q3", "QA", "QD", 2, 0),
+    M("Q3", "QB", "QC", None, None, finished=False),
+]
+for i in range(1, 11):
+    matches_f += _weak_complete_third(f"W{i}")   # 10 settled-below thirds
+
+model_f = WorldCupModel(matches_f)
+assert [t.abbr for t in model_f.groups()["P3"]][2] == "TGT", model_f.groups()["P3"]
+
+q_tgt = qualification_probability(model_f, "TGT", NeutralOdds())
+req = q_tgt["requirements"]
+assert req is not None, q_tgt
+contested = {g["group"] for g in req["groups"]}
+assert contested == {"Q3"}, contested            # only the live group is listed
+assert all(not g["group"].startswith("W") for g in req["groups"])  # settled groups excluded
+assert req["conditional"] is False, req          # TGT has finished playing
+assert req["settled_favourable"] >= 1, req
+print(f"Requirements: only contested group listed ({contested}), "
+      f"settled_favourable={req['settled_favourable']}: PASS")
 
 
 print("\nAll assertions passed.")
