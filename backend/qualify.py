@@ -398,8 +398,13 @@ def _requirements(model, target, own, other_groups, other_dists, other_rem, k, o
                 "matches": [_match_meta(m) for m in rem],
             })
     groups.sort(key=lambda c: c["probability"], reverse=True)
+    need = max(0, k - settled_below)
+    if need > len(groups):
+        # Even if every contested result goes the target's way, it still can't
+        # reach enough "below" thirds to make the top 8 — path is impossible.
+        return None
     return {
-        "need": max(0, k - settled_below),
+        "need": need,
         "settled_favourable": settled_below,
         "conditional": own["still_playing"],
         "tie_warning": tie_mass > _TIE_WARN,
