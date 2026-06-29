@@ -7,13 +7,15 @@ const pct = p => {
   return Math.round(v) + '%'
 }
 
-// Stages of the route after the opening R32 tie.
+// Returns a CSS class name based on probability magnitude.
+const pClass = p => p >= 0.55 ? 'p-high' : p >= 0.25 ? 'p-mid' : 'p-low'
+
 const STAGES = [
   { key: 'R16', label: 'R16' },
   { key: 'QF', label: 'QF' },
   { key: 'SF', label: 'SF' },
   { key: 'F', label: 'Final' },
-  { key: 'champion', label: '🏆' },
+  { key: 'champion', label: 'Winner' },
 ]
 
 const OPP_ROUNDS = [
@@ -32,7 +34,11 @@ function R32Tie({ tie, target }) {
   const won = decided && tie.winner === target
   return (
     <div className={`ko-tie ${decided ? (won ? 'win' : 'lose') : ''}`}>
-      <div className="ko-tie-label">Round of 32 {live && <span className="dot" />}{status}</div>
+      <div className="ko-tie-label">
+        Round of 32
+        {live && <span className="dot" />}
+        <span>{status}</span>
+      </div>
       <div className="ko-tie-teams">
         <span className={tie.winner === tie.home ? 'adv' : ''}>{tie.home_name || tie.home}</span>
         <span className="ko-sc">{hasScore ? `${tie.home_score}–${tie.away_score}` : 'v'}</span>
@@ -77,10 +83,11 @@ export default function KnockoutPanel({ knockout, team, targetName, allTeams, on
           const p = reach[s.key] || 0
           const secured = p >= 0.999
           const dead = p <= 1e-9
+          const pc = !secured && !dead ? pClass(p) : ''
           return (
-            <div key={s.key} className={`route-cell ${secured ? 'secured' : dead ? 'dead' : ''}`}>
+            <div key={s.key} className={`route-cell ${secured ? 'secured' : dead ? 'dead' : pc}`}>
               <div className="route-stage">{s.label}</div>
-              <div className="route-pct">{secured ? '✓' : pct(p)}</div>
+              <div className={`route-pct ${pc}`}>{secured ? '✓' : pct(p)}</div>
             </div>
           )
         })}
@@ -90,19 +97,29 @@ export default function KnockoutPanel({ knockout, team, targetName, allTeams, on
 
       {OPP_ROUNDS.some(r => (knockout.opponents?.[r.key] || []).length) && (
         <div className="ko-opps">
-          <h3 className="section">Likely opponents</h3>
+          <h2 className="section">Likely opponents</h2>
           <div className="grid3">
-            {OPP_ROUNDS.filter(r => (knockout.opponents?.[r.key] || []).length).map(r => (
-              <div key={r.key} className="panel ko-opp">
-                <div className="ko-opp-round">{r.label}</div>
-                {(knockout.opponents[r.key] || []).map(o => (
-                  <div key={o.abbr} className="ko-opp-row">
-                    <span className="ko-opp-team">{o.name || o.abbr}</span>
-                    <span className="ko-opp-p">{pct(o.p)}</span>
-                  </div>
-                ))}
-              </div>
-            ))}
+            {OPP_ROUNDS.filter(r => (knockout.opponents?.[r.key] || []).length).map(r => {
+              const opps = knockout.opponents[r.key] || []
+              const maxP = opps[0]?.p || 1
+              return (
+                <div key={r.key} className="panel ko-opp">
+                  <div className="ko-opp-round">{r.label}</div>
+                  {opps.map(o => (
+                    <div key={o.abbr} className="ko-opp-row">
+                      <span className="ko-opp-team">{o.name || o.abbr}</span>
+                      <div className="ko-opp-track">
+                        <div
+                          className={`ko-opp-bar ${pClass(o.p)}`}
+                          style={{ width: `${Math.max(6, (o.p / maxP) * 100)}%` }}
+                        />
+                      </div>
+                      <span className={`ko-opp-p ${pClass(o.p)}`}>{pct(o.p)}</span>
+                    </div>
+                  ))}
+                </div>
+              )
+            })}
           </div>
         </div>
       )}

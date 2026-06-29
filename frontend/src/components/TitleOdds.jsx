@@ -4,6 +4,9 @@ const pct = p => {
   return Math.round(v) + '%'
 }
 
+// Color the percentage text based on how meaningful the odds are.
+const pClass = p => p >= 0.15 ? 'p-high' : p >= 0.07 ? 'p-mid' : ''
+
 export default function TitleOdds({ titleOdds, target }) {
   if (!titleOdds || titleOdds.length === 0) return null
   const max = titleOdds[0]?.p || 1
@@ -15,11 +18,14 @@ export default function TitleOdds({ titleOdds, target }) {
       <tbody>
         {titleOdds.map((t, i) => (
           <tr key={t.abbr} className={t.abbr === target ? 'sco' : ''}>
-            <td className="rk">{i + 1}</td>
+            <td className={`rk ${i === 0 ? 'rk-gold' : ''}`}>{i + 1}</td>
             <td className="team">{t.name || t.abbr}</td>
             <td className="to-cell">
-              <span className="to-bar" style={{ width: `${Math.max(4, (t.p / max) * 100)}%` }} />
-              <span className="to-pct">{pct(t.p)}</span>
+              <span
+                className={`to-bar ${i === 0 ? 'to-bar-gold' : ''}`}
+                style={{ width: `${Math.max(4, (t.p / max) * 100)}%` }}
+              />
+              <span className={`to-pct ${pClass(t.p)}`}>{pct(t.p)}</span>
             </td>
           </tr>
         ))}

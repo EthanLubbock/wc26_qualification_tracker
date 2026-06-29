@@ -146,10 +146,17 @@ footer a{color:var(--saltire)}
             letter-spacing:.08em;font-size:12px;color:var(--muted)}
 .route-cell .route-pct{font-family:var(--disp);font-weight:800;font-size:22px;color:var(--paper);
             margin-top:4px;font-variant-numeric:tabular-nums}
-.route-cell.secured{border-color:rgba(43,212,125,.5)}
+.route-cell.secured{border-color:rgba(43,212,125,.55);background:rgba(43,212,125,.06)}
 .route-cell.secured .route-pct{color:var(--green)}
-.route-cell.dead{opacity:.4}
+.route-cell.dead{opacity:.35}
 .route-cell.dead .route-pct{color:var(--red)}
+/* probability-tinted cells (non-secured, non-dead) */
+.route-cell.p-high{border-color:rgba(43,212,125,.35)}
+.route-cell.p-mid{border-color:rgba(244,183,64,.35)}
+.route-cell.p-low{border-color:rgba(239,90,106,.25)}
+.route-cell .route-pct.p-high{color:var(--green)}
+.route-cell .route-pct.p-mid{color:var(--amber)}
+.route-cell .route-pct.p-low{color:rgba(239,90,106,.8)}
 
 .ko-tie{background:var(--navy-800);border:1px solid var(--navy-700);border-radius:12px;
         padding:14px 16px;margin-bottom:18px;border-top:3px solid var(--navy-600)}
@@ -164,9 +171,23 @@ footer a{color:var(--saltire)}
 
 .ko-opp{padding:14px 16px}
 .ko-opp-round{font-family:var(--disp);text-transform:uppercase;letter-spacing:.08em;
-        font-size:12px;color:var(--muted);margin-bottom:8px}
-.ko-opp-row{display:flex;justify-content:space-between;font-size:14px;padding:3px 0}
-.ko-opp-p{color:var(--muted);font-variant-numeric:tabular-nums}
+        font-size:12px;color:var(--muted);margin-bottom:10px}
+.ko-opp-row{display:flex;align-items:center;gap:8px;font-size:14px;padding:5px 0;
+        border-bottom:1px solid rgba(20,50,87,.35)}
+.ko-opp-row:last-child{border-bottom:none}
+.ko-opp-team{flex:0 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ko-opp-track{flex:1;min-width:24px;height:5px;background:var(--navy-700);
+        border-radius:999px;overflow:hidden}
+.ko-opp-bar{height:100%;border-radius:999px;transition:width .35s ease}
+.ko-opp-bar.p-high{background:var(--green)}
+.ko-opp-bar.p-mid{background:var(--amber)}
+.ko-opp-bar.p-low{background:var(--red)}
+.ko-opp-p{flex:0 0 38px;text-align:right;font-family:var(--disp);font-weight:700;
+        font-size:13px;font-variant-numeric:tabular-nums}
+/* generic probability text-colour utilities */
+.p-high{color:var(--green)}
+.p-mid{color:var(--amber)}
+.p-low{color:rgba(239,90,106,.85)}
 
 .ko-out,.ko-placeholder{text-align:center;padding:28px 20px}
 .ko-cta{margin-top:14px;background:var(--saltire);color:#fff;border:none;border-radius:999px;
@@ -174,10 +195,12 @@ footer a{color:var(--saltire)}
 .ko-cta:hover{filter:brightness(1.1)}
 
 .title-odds td.to-cell{display:flex;align-items:center;gap:8px;justify-content:flex-end}
-.title-odds .to-bar{height:8px;border-radius:999px;background:var(--saltire);min-width:4px;flex:1;max-width:140px}
-.title-odds .to-pct{font-variant-numeric:tabular-nums;min-width:38px;text-align:right}
+.title-odds .to-bar{height:8px;border-radius:999px;background:var(--green);min-width:4px;flex:1;max-width:140px}
+.title-odds .to-bar-gold{background:var(--amber);box-shadow:0 0 8px -2px rgba(244,183,64,.6)}
+.title-odds .to-pct{font-family:var(--disp);font-weight:700;font-variant-numeric:tabular-nums;min-width:40px;text-align:right}
 .title-odds tr.sco{background:linear-gradient(90deg,rgba(47,128,237,.22),transparent)}
 .title-odds tr.sco td.team{color:#fff}
+.rk-gold{color:var(--amber);font-weight:700}
 
 @media(max-width:680px){.route{grid-template-columns:repeat(3,1fr)}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important}}

@@ -13,6 +13,7 @@ so ESPN is only hit once regardless of which team is selected.
 import os
 import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -32,8 +33,6 @@ TTL_LIVE = 20         # seconds while the target team's match is live
 TITLE_ODDS_TOP = 8    # leaderboard length
 DIST_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
-app = FastAPI(title="World Cup 2026 Tracker")
-
 _fetcher = Fetcher(cache_path="espn_cache.json")
 _odds = EloOdds() if os.getenv("ODDS", "elo") == "elo" else NeutralOdds()
 _lock = threading.Lock()
@@ -42,6 +41,31 @@ _cache: dict[str, dict] = {}   # team abbr -> {"state": dict, "ts": float}
 # Shared per-refresh cache: model + prebuilt knockout engine output (all teams
 # share it, so ESPN and the Elo provider are hit once regardless of selection).
 _model_cache: dict = {"model": None, "knockout": None, "ts": 0.0}
+
+
+def _refresh_loop() -> None:
+    """Warm the model cache immediately on startup, then refresh every TTL_DEFAULT
+    seconds in the background so user requests never trigger a cold build."""
+    with _lock:
+        _fresh_model()
+    while True:
+        time.sleep(TTL_DEFAULT)
+        with _lock:
+            _model_cache["ts"] = 0.0  # force rebuild even if within normal TTL
+            _cache.clear()            # drop per-team cache so next poll sees fresh data
+            try:
+                _fresh_model()
+            except Exception:
+                pass
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    threading.Thread(target=_refresh_loop, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="World Cup 2026 Tracker", lifespan=lifespan)
 
 
 def _ttl(state) -> int:
