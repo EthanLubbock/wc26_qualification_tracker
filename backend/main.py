@@ -140,6 +140,8 @@ def _bracket_tree(kdata: dict) -> dict:
         for slot in b.get(rnd, []):
             if rnd == "R32":
                 m = r32.get(slot.team_a) or r32.get(slot.team_b)
+                r32_dist = adv.get(("R32", slot.index), {})
+                r32_top = sorted(r32_dist.items(), key=lambda x: -x[1])[:1]
                 out.append({
                     "index": slot.index,
                     "team_a": slot.team_a,
@@ -151,6 +153,10 @@ def _bracket_tree(kdata: dict) -> dict:
                     "away_score": m.away_score if m else None,
                     "state": m.state if m else None,
                     "kickoff": m.kickoff if m else None,
+                    "adv": [
+                        {"abbr": a, "name": names.get(a, a), "p": p}
+                        for a, p in r32_top if p > 1e-9
+                    ],
                 })
             else:
                 dist = adv.get((rnd, slot.index), {})

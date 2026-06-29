@@ -97,7 +97,11 @@ export default function Bracket({ bracket, path, team, onPickTeam }) {
                 const cs = slots[prev]?.[ci]
                 if (!cs) return null
                 if (cs.winner) return cs.adv?.find(x => x.abbr === cs.winner) || { abbr: cs.winner, name: cs.winner }
-                return cs.adv?.[0] || null
+                if (cs.adv?.length) return cs.adv[0]
+                // R32 slot with no adv (teams not yet assigned): fall back to team_a
+                if (cs.team_a) return { abbr: cs.team_a, name: cs.name_a }
+                if (cs.team_b) return { abbr: cs.team_b, name: cs.name_b }
+                return null
               }
               const pctOf = abbr => (slot.adv || []).find(x => x.abbr === abbr)?.p
               participants = [topOf(cids[0]), topOf(cids[1])]
