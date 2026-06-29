@@ -19,12 +19,17 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from tracker import Fetcher, build_model, analyse
+from tracker import (
+    Fetcher, WorldCupModel, parse_matches, parse_knockout_matches,
+    analyse, tournament_phase,
+)
 from odds import EloOdds, NeutralOdds
 from qualify import qualification_probability
+import bracket as kbracket
 
 TTL_DEFAULT = 90      # seconds between refreshes normally
 TTL_LIVE = 20         # seconds while the target team's match is live
+TITLE_ODDS_TOP = 8    # leaderboard length
 DIST_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 app = FastAPI(title="World Cup 2026 Tracker")
@@ -34,8 +39,9 @@ _odds = EloOdds() if os.getenv("ODDS", "elo") == "elo" else NeutralOdds()
 _lock = threading.Lock()
 _cache: dict[str, dict] = {}   # team abbr -> {"state": dict, "ts": float}
 
-# Shared parsed model cache: rebuilt once per data refresh (all teams share it).
-_model_cache: dict = {"model": None, "ts": 0.0}
+# Shared per-refresh cache: model + prebuilt knockout engine output (all teams
+# share it, so ESPN and the Elo provider are hit once regardless of selection).
+_model_cache: dict = {"model": None, "knockout": None, "ts": 0.0}
 
 
 def _ttl(state) -> int:
@@ -43,12 +49,88 @@ def _ttl(state) -> int:
 
 
 def _fresh_model():
-    """Return a WorldCupModel, rebuilding from ESPN only when stale."""
+    """Return a WorldCupModel, rebuilding from ESPN only when stale. Builds the
+    knockout engine output on the same cycle so the Elo matchups are fetched
+    once per refresh, not per request."""
     now = time.time()
     if _model_cache["model"] is None or (now - _model_cache["ts"]) > TTL_DEFAULT:
-        _model_cache["model"] = build_model(_fetcher)
+        events = _fetcher.all_events()
+        model = WorldCupModel(parse_matches(events))
+        _model_cache["model"] = model
+        _model_cache["knockout"] = _build_knockout(model, events)
         _model_cache["ts"] = now
     return _model_cache["model"]
+
+
+def _build_knockout(model: WorldCupModel, events: list) -> dict | None:
+    """Precompute the bracket, advance distributions and title odds once. Returns
+    None until the group stage is complete (knockout panel then shows a
+    placeholder)."""
+    if tournament_phase(model) != "knockout":
+        return None
+    km = parse_knockout_matches(events)
+    valid = set(model.teams)
+    b = kbracket.build_bracket(km, valid)
+    adv = kbracket.advance_distributions(b, _odds)
+    todds = kbracket.title_odds(b, _odds, adv)
+    r32 = {}
+    for m in km:
+        if m.round == "R32":
+            r32[m.home] = m
+            r32[m.away] = m
+    return {
+        "bracket": b,
+        "adv": adv,
+        "title_odds": todds,
+        "default_team": max(todds, key=todds.get) if todds else None,
+        "r32": r32,
+        "names": {a: model.teams[a].name for a in valid},
+    }
+
+
+def _knockout_payload(team: str, kdata: dict | None) -> dict | None:
+    """Per-team knockout view: reach probabilities, R32 tie and likely opponents
+    per upcoming round. None when the group stage isn't complete."""
+    if kdata is None:
+        return None
+    b, adv, names = kdata["bracket"], kdata["adv"], kdata["names"]
+    reach = kbracket.reach_probabilities(b, _odds, team, adv)
+    in_bracket = team in kdata["r32"]
+    payload = {
+        "in_bracket": in_bracket,
+        "default_team": kdata["default_team"],
+        "reach": reach,
+        "r32_tie": None,
+        "opponents": {},
+    }
+    if not in_bracket:
+        payload["reach"] = {k: 0.0 for k in reach}
+        return payload
+
+    m = kdata["r32"][team]
+    payload["r32_tie"] = {
+        "home": m.home, "away": m.away,
+        "home_name": m.home_name, "away_name": m.away_name,
+        "home_score": m.home_score, "away_score": m.away_score,
+        "state": m.state, "kickoff": m.kickoff, "winner": m.winner,
+    }
+    for rnd in ("R16", "QF", "SF", "F"):
+        if reach.get(rnd, 0.0) <= 1e-9:
+            continue
+        dist = kbracket.opponent_distribution(b, _odds, team, rnd, adv)
+        top = sorted(dist.items(), key=lambda x: -x[1])[:3]
+        payload["opponents"][rnd] = [
+            {"abbr": a, "name": names.get(a, a), "p": p} for a, p in top if p > 1e-9
+        ]
+    return payload
+
+
+def _title_odds_list(kdata: dict | None) -> list | None:
+    if kdata is None:
+        return None
+    names, todds = kdata["names"], kdata["title_odds"]
+    top = sorted(todds.items(), key=lambda x: -x[1])[:TITLE_ODDS_TOP]
+    return [{"abbr": a, "name": names.get(a, a), "p": p} for a, p in top]
 
 
 def get_state(team: str) -> dict:
@@ -66,6 +148,9 @@ def get_state(team: str) -> dict:
                     )
                 state = analyse(model, team)
                 state["qualification"] = qualification_probability(model, team, _odds)
+                kdata = _model_cache["knockout"]
+                state["knockout"] = _knockout_payload(team, kdata)
+                state["title_odds"] = _title_odds_list(kdata)
                 state["stale"] = False
                 _cache[team] = {"state": state, "ts": time.time()}
             except HTTPException:

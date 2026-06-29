@@ -29,19 +29,32 @@ ESPN_SCOREBOARD = (
 )
 GROUP_STAGE_START = date(2026, 6, 11)
 GROUP_STAGE_END = date(2026, 6, 27)
+KNOCKOUT_START = date(2026, 6, 28)   # Round of 32 begins
+KNOCKOUT_END = date(2026, 7, 19)     # Final
 THIRDS_ADVANCING = 8          # best 8 of 12 third-placed teams reach the Round of 32
 ASSUMED_MARGIN = 1            # goal margin used in hypothetical win/loss scenarios
 HTTP_TIMEOUT = 8              # seconds
 
 QUALIFY_OUTCOMES = ("win_group", "runner_up", "third_in", "third_out", "fourth_out")
 
+# Knockout rounds, leaf (Round of 32) to root (Final).
+ROUNDS = ["R32", "R16", "QF", "SF", "F"]
 
-def group_stage_dates() -> list[str]:
-    days, d = [], GROUP_STAGE_START
-    while d <= GROUP_STAGE_END:
+
+def _dates_between(start: date, end: date) -> list[str]:
+    days, d = [], start
+    while d <= end:
         days.append(d.strftime("%Y%m%d"))
         d += timedelta(days=1)
     return days
+
+
+def group_stage_dates() -> list[str]:
+    return _dates_between(GROUP_STAGE_START, GROUP_STAGE_END)
+
+
+def knockout_dates() -> list[str]:
+    return _dates_between(KNOCKOUT_START, KNOCKOUT_END)
 
 
 # --- parsed records -------------------------------------------------------
@@ -129,11 +142,11 @@ class Fetcher:
         return data.get("events", [])
 
     def all_events(self) -> list:
-        """Return raw ESPN events for the whole group stage, refreshing only
-        days that aren't fully finished yet."""
+        """Return raw ESPN events for the whole tournament (group stage plus
+        knockouts), refreshing only days that aren't fully finished yet."""
         today = date.today().strftime("%Y%m%d")
         events: list = []
-        for day in group_stage_dates():
+        for day in group_stage_dates() + knockout_dates():
             cached = self._day_cache.get(day)
             day_is_past_and_done = cached is not None and day < today and _all_done(cached)
             if day_is_past_and_done:
@@ -198,6 +211,98 @@ def parse_matches(events: list) -> list[Match]:
             kickoff=ev.get("date", ""),
         ))
     return matches
+
+
+# --- knockout fixtures ----------------------------------------------------
+
+@dataclass
+class KnockoutMatch:
+    round: str                  # one of ROUNDS
+    home: str | None            # abbr, or None if not yet determined
+    away: str | None
+    home_score: int | None
+    away_score: int | None
+    winner: str | None          # abbr once decided, else None
+    state: str                  # "pre" | "in" | "post"
+    completed: bool
+    kickoff: str
+    order: int                  # ESPN event id — sequential in bracket order
+    home_name: str = ""
+    away_name: str = ""
+
+
+def _parse_round(comp: dict) -> str | None:
+    """Map an ESPN knockout altGameNote to a ROUNDS code, or None for group /
+    3rd-place fixtures (which we ignore for the bracket)."""
+    note = (comp.get("altGameNote") or "").lower()
+    if not note or "group" in note:
+        return None
+    if "round of 32" in note:
+        return "R32"
+    if "round of 16" in note:
+        return "R16"
+    if "quarter" in note:
+        return "QF"
+    if "semi" in note:
+        return "SF"
+    if "3rd" in note or "third" in note:      # 3rd-place playoff — not in the tree
+        return None
+    if "final" in note:
+        return "F"
+    return None
+
+
+def parse_knockout_matches(events: list) -> list[KnockoutMatch]:
+    """Parse ESPN knockout fixtures into KnockoutMatch records. Higher rounds
+    carry placeholder competitor codes (e.g. "Round of 32 3 Winner") until the
+    feeding ties are decided; those are left as the raw code and filtered out
+    against the real team set in bracket.build_bracket()."""
+    out: list[KnockoutMatch] = []
+    for ev in events:
+        comp = ev["competitions"][0]
+        rnd = _parse_round(comp)
+        if not rnd:
+            continue
+        sides = {c["homeAway"]: c for c in comp["competitors"]}
+        if "home" not in sides or "away" not in sides:
+            continue
+        home, away = sides["home"], sides["away"]
+        state = comp["status"]["type"]["state"]
+        completed = comp["status"]["type"]["completed"]
+
+        def score(side):
+            try:
+                return int(side.get("score"))
+            except (TypeError, ValueError):
+                return None
+
+        hs, as_ = score(home), score(away)
+        h_abbr = home["team"]["abbreviation"]
+        a_abbr = away["team"]["abbreviation"]
+        winner = None
+        if completed and hs is not None and as_ is not None:
+            winner = h_abbr if hs > as_ else a_abbr if as_ > hs else None
+
+        try:
+            order = int(ev.get("id"))
+        except (TypeError, ValueError):
+            order = 0
+
+        out.append(KnockoutMatch(
+            round=rnd,
+            home=h_abbr,
+            away=a_abbr,
+            home_name=home["team"].get("shortDisplayName", h_abbr),
+            away_name=away["team"].get("shortDisplayName", a_abbr),
+            home_score=hs,
+            away_score=as_,
+            winner=winner,
+            state=state,
+            completed=completed,
+            kickoff=ev.get("date", ""),
+            order=order,
+        ))
+    return out
 
 
 # --- model ----------------------------------------------------------------
@@ -290,6 +395,18 @@ def _h2h_key(team: TeamRow, block: list[TeamRow]):
             gf += f; gd += (f - ag)
             pts += 3 if f > ag else (1 if f == ag else 0)
     return (pts, gd, gf, team.gd, team.gf)
+
+
+def tournament_phase(model: WorldCupModel) -> str:
+    """Single source of truth for which stage we're in.
+
+    "group"    -> at least one group still has an unplayed match.
+    "knockout" -> every group is complete; the bracket is live/pending.
+    """
+    groups = model.groups()
+    if groups and all(model.group_complete(g) for g in groups):
+        return "knockout"
+    return "group"
 
 
 # --- shared classifier (used by both Step 1 scenarios and Step 2 simulation) ---
@@ -427,10 +544,13 @@ def analyse(model: WorldCupModel, target: str) -> dict:
         for m in model.matches
     )
 
+    phase = tournament_phase(model)
     return {
         "generated": time.strftime("%Y-%m-%d %H:%M:%S %Z"),
         "live": live,
         "target": target,
+        "phase": phase,
+        "group_stage_complete": phase == "knockout",
         "group": group,
         "group_table": [t.as_dict() for t in model.groups().get(group, [])],
         "target_match": _match_view(target_match),
@@ -464,6 +584,10 @@ def _match_view(m: Match | None) -> dict | None:
 
 def build_model(fetcher: Fetcher) -> WorldCupModel:
     return WorldCupModel(parse_matches(fetcher.all_events()))
+
+
+def build_knockout_matches(fetcher: Fetcher) -> list[KnockoutMatch]:
+    return parse_knockout_matches(fetcher.all_events())
 
 
 def build_state(fetcher: Fetcher, target: str) -> dict:

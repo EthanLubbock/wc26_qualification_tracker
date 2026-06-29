@@ -2,6 +2,7 @@
 from tracker import (
     Match, WorldCupModel, analyse, team_qualifies, with_result,
     QUALIFY_OUTCOMES, THIRDS_ADVANCING, target_scenarios,
+    tournament_phase, parse_knockout_matches,
 )
 
 
@@ -362,6 +363,58 @@ assert req["conditional"] is False, req          # TGT has finished playing
 assert req["settled_favourable"] >= 1, req
 print(f"Requirements: only contested group listed ({contested}), "
       f"settled_favourable={req['settled_favourable']}: PASS")
+
+
+# ---------------------------------------------------------------------------
+# Tournament phase: "group" while any group has an unplayed match, else "knockout".
+# ---------------------------------------------------------------------------
+
+phase_pending = WorldCupModel([
+    M("A", "T1", "T2", 1, 0), M("A", "T3", "T4", 0, 0),
+    M("A", "T1", "T3", 2, 1), M("A", "T2", "T4", 1, 1),
+    M("A", "T1", "T4", 0, 0), M("A", "T2", "T3", 1, 0, finished=False),  # one TBD
+])
+assert tournament_phase(phase_pending) == "group", tournament_phase(phase_pending)
+
+phase_done = WorldCupModel([
+    M("A", "T1", "T2", 1, 0), M("A", "T3", "T4", 0, 0),
+    M("A", "T1", "T3", 2, 1), M("A", "T2", "T4", 1, 1),
+    M("A", "T1", "T4", 0, 0), M("A", "T2", "T3", 1, 0),
+])
+assert tournament_phase(phase_done) == "knockout", tournament_phase(phase_done)
+print("tournament_phase: pending group -> 'group', all complete -> 'knockout': PASS")
+
+
+# ---------------------------------------------------------------------------
+# Knockout parsing: round label -> ROUNDS code, winner from scores, 3rd-place skipped.
+# ---------------------------------------------------------------------------
+
+def KE(eid, note, h, a, hs, as_, state="post", completed=True):
+    def comp(side, ab, sc):
+        return {"homeAway": side, "team": {"abbreviation": ab, "shortDisplayName": ab},
+                "score": None if sc is None else str(sc)}
+    return {
+        "id": eid, "date": "2026-06-28T19:00Z",
+        "competitions": [{
+            "altGameNote": note,
+            "status": {"type": {"state": state, "completed": completed}},
+            "competitors": [comp("home", h, hs), comp("away", a, as_)],
+        }],
+    }
+
+ko_events = [
+    KE("760486", "FIFA World Cup, Round of 32", "RSA", "CAN", 1, 2),
+    KE("760487", "FIFA World Cup, Round of 32", "BRA", "JPN", None, None, state="pre", completed=False),
+    KE("760510", "FIFA World Cup, Quarterfinals", "RD16 W1", "RD16 W2", None, None, state="pre", completed=False),
+    KE("760516", "FIFA World Cup, 3rd-Place Match", "SF L1", "SF L2", None, None, state="pre", completed=False),
+    KE("999999", "FIFA World Cup, Group A", "T1", "T2", 0, 0),   # group fixture, ignored
+]
+km = parse_knockout_matches(ko_events)
+assert [m.round for m in km] == ["R32", "R32", "QF"], [m.round for m in km]   # 3rd-place + group dropped
+assert km[0].winner == "CAN" and km[0].completed, km[0]      # winner from higher score
+assert km[1].winner is None, km[1]                            # undecided tie
+assert km[0].order == 760486, km[0].order
+print("parse_knockout_matches: round labels, winner derivation, 3rd-place/group skipped: PASS")
 
 
 print("\nAll assertions passed.")

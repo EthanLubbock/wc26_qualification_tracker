@@ -6,8 +6,11 @@ import Scenarios from './components/Scenarios.jsx'
 import Ladder from './components/Ladder.jsx'
 import Likelihood from './components/Likelihood.jsx'
 import Requirements from './components/Requirements.jsx'
+import KnockoutPanel from './components/KnockoutPanel.jsx'
+import TitleOdds from './components/TitleOdds.jsx'
 
 const POLL_MS = 25000
+const INITIAL_TEAM = 'SCO'
 
 function GroupTable({ rows, target }) {
   return (
@@ -55,11 +58,13 @@ function TeamSelect({ allTeams, team, onChange }) {
 }
 
 export default function App() {
-  const [team, setTeam] = useState('SCO')
+  const [team, setTeam] = useState(INITIAL_TEAM)
   const [state, setState] = useState(null)
   const [connErr, setConnErr] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [view, setView] = useState('group')
   const cacheRef = useRef(new Map())
+  const firstStateRef = useRef(false)
 
   useEffect(() => {
     let alive = true
@@ -92,6 +97,21 @@ export default function App() {
     return () => { alive = false; clearInterval(id) }
   }, [team])
 
+  // Once the first payload arrives during the knockout phase, focus the
+  // Knockout tab and, if the default team (SCO) didn't make it, switch to a
+  // live team so the view loads populated. Runs once; manual picks stick.
+  useEffect(() => {
+    if (firstStateRef.current || !state) return
+    if (state.phase === 'knockout') {
+      setView('knockout')
+      const ko = state.knockout
+      if (team === INITIAL_TEAM && ko && !ko.in_bracket && ko.default_team) {
+        setTeam(ko.default_team)
+      }
+    }
+    firstStateRef.current = true
+  }, [state, team])
+
   const stamp = loading && !state ? 'loading…'
     : connErr ? 'connection error'
     : state ? (state.stale ? '⚠ cached · ' : '') + 'updated ' + (state.generated || '')
@@ -117,21 +137,57 @@ export default function App() {
         <div className="verdict"><h1>Loading…</h1></div>
       ) : (
         <>
-          <Verdict state={state} />
-          <Likelihood qualification={state.qualification} />
-          <Requirements requirements={state.qualification?.requirements} scenarios={state.scenarios} />
-          <Scores state={state} />
+          <div className="tabs">
+            <button className={`tab ${view === 'group' ? 'is-active' : ''}`}
+                    onClick={() => setView('group')}>Group stage</button>
+            <button className={`tab ${view === 'knockout' ? 'is-active' : ''}`}
+                    onClick={() => setView('knockout')}>Knockouts</button>
+          </div>
 
-          <h2 className="section">
-            {state.scenarios?.phase === 'pending' ? `If ${targetName}…` : `${targetName} · Final`}
-          </h2>
-          <Scenarios scenarios={state.scenarios} target={team} cutoff={state.cutoff} />
+          {view === 'group' ? (
+            <>
+              {state.group_stage_complete && (
+                <div className="banner">Group stage complete — final standings.</div>
+              )}
+              <Verdict state={state} />
+              <Likelihood qualification={state.qualification} />
+              <Requirements requirements={state.qualification?.requirements} scenarios={state.scenarios} />
+              <Scores state={state} />
 
-          <h2 className="section">Best third-placed teams · top 8 advance</h2>
-          <Ladder thirds={state.live_thirds} cutoff={state.cutoff} target={team} />
+              <h2 className="section">
+                {state.scenarios?.phase === 'pending' ? `If ${targetName}…` : `${targetName} · Final`}
+              </h2>
+              <Scenarios scenarios={state.scenarios} target={team} cutoff={state.cutoff} />
 
-          <h2 className="section" style={{ marginTop: 26 }}>Group {state.group}</h2>
-          <GroupTable rows={state.group_table} target={team} />
+              <h2 className="section">Best third-placed teams · top 8 advance</h2>
+              <Ladder thirds={state.live_thirds} cutoff={state.cutoff} target={team} />
+
+              <h2 className="section" style={{ marginTop: 26 }}>Group {state.group}</h2>
+              <GroupTable rows={state.group_table} target={team} />
+            </>
+          ) : (
+            <>
+              {!state.group_stage_complete ? (
+                <div className="panel ko-placeholder">
+                  <h3>Knockouts</h3>
+                  <p className="sub">Come back when the group stage is complete.</p>
+                </div>
+              ) : (
+                <>
+                  <h2 className="section">{targetName} · route to the title</h2>
+                  <KnockoutPanel
+                    knockout={state.knockout}
+                    team={team}
+                    targetName={targetName}
+                    allTeams={state.all_teams}
+                    onPickTeam={setTeam}
+                  />
+                  <h2 className="section" style={{ marginTop: 26 }}>Title race</h2>
+                  <TitleOdds titleOdds={state.title_odds} target={team} />
+                </>
+              )}
+            </>
+          )}
 
           <footer>
             Top two in every group plus the eight best third-placed teams reach the
