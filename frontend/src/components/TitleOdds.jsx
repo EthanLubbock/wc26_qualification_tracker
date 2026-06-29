@@ -23,11 +23,11 @@ export default function TitleOdds({ titleOdds, target }) {
             <td className="to-cell">
               <div className="to-track">
                 <div
-                  className={`to-bar ${i === 0 ? 'to-bar-gold' : pClass(t.p)}`}
+                  className="to-bar"
                   style={{ width: `${Math.max(4, (t.p / max) * 100)}%` }}
                 />
               </div>
-              <span className={`to-pct ${pClass(t.p)}`}>{pct(t.p)}</span>
+              <span className="to-pct">{pct(t.p)}</span>
             </td>
           </tr>
         ))}
