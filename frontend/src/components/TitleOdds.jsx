@@ -21,10 +21,12 @@ export default function TitleOdds({ titleOdds, target }) {
             <td className={`rk ${i === 0 ? 'rk-gold' : ''}`}>{i + 1}</td>
             <td className="team">{t.name || t.abbr}</td>
             <td className="to-cell">
-              <span
-                className={`to-bar ${i === 0 ? 'to-bar-gold' : ''}`}
-                style={{ width: `${Math.max(4, (t.p / max) * 100)}%` }}
-              />
+              <div className="to-track">
+                <div
+                  className={`to-bar ${i === 0 ? 'to-bar-gold' : pClass(t.p)}`}
+                  style={{ width: `${Math.max(4, (t.p / max) * 100)}%` }}
+                />
+              </div>
               <span className={`to-pct ${pClass(t.p)}`}>{pct(t.p)}</span>
             </td>
           </tr>

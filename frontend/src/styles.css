@@ -175,7 +175,7 @@ footer a{color:var(--saltire)}
 .ko-opp-row{display:flex;align-items:center;gap:8px;font-size:14px;padding:5px 0;
         border-bottom:1px solid rgba(20,50,87,.35)}
 .ko-opp-row:last-child{border-bottom:none}
-.ko-opp-team{flex:0 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ko-opp-team{flex:0 0 6.5em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ko-opp-track{flex:1;min-width:24px;height:5px;background:var(--navy-700);
         border-radius:999px;overflow:hidden}
 .ko-opp-bar{height:100%;border-radius:999px;transition:width .35s ease}
@@ -195,8 +195,11 @@ footer a{color:var(--saltire)}
 .ko-cta:hover{filter:brightness(1.1)}
 
 .title-odds td.to-cell{display:flex;align-items:center;gap:8px;justify-content:flex-end}
-.title-odds .to-bar{height:8px;border-radius:999px;background:var(--green);min-width:4px;flex:1;max-width:140px}
-.title-odds .to-bar-gold{background:var(--amber);box-shadow:0 0 8px -2px rgba(244,183,64,.6)}
+.title-odds .to-track{flex:1;max-width:140px;height:8px;background:var(--navy-700);border-radius:999px;overflow:hidden}
+.title-odds .to-bar{height:100%;border-radius:999px;background:var(--green);min-width:4px;transition:width .35s ease}
+.title-odds .to-bar.to-bar-gold{background:var(--amber);box-shadow:0 0 8px -2px rgba(244,183,64,.6)}
+.title-odds .to-bar.p-mid{background:var(--amber)}
+.title-odds .to-bar.p-low{background:rgba(239,90,106,.85)}
 .title-odds .to-pct{font-family:var(--disp);font-weight:700;font-variant-numeric:tabular-nums;min-width:40px;text-align:right}
 .title-odds tr.sco{background:linear-gradient(90deg,rgba(47,128,237,.22),transparent)}
 .title-odds tr.sco td.team{color:#fff}
