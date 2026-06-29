@@ -1,3 +1,5 @@
+import { flag } from '../flags.js'
+
 const pct = p => {
   const v = (p || 0) * 100
   if (v > 0 && v < 1) return '<1%'
@@ -19,7 +21,7 @@ export default function TitleOdds({ titleOdds, target }) {
         {titleOdds.map((t, i) => (
           <tr key={t.abbr} className={t.abbr === target ? 'sco' : ''}>
             <td className={`rk ${i === 0 ? 'rk-gold' : ''}`}>{i + 1}</td>
-            <td className="team">{t.name || t.abbr}</td>
+            <td className="team">{flag(t.abbr)} {t.name || t.abbr}</td>
             <td className="to-cell">
               <div className="to-track">
                 <div

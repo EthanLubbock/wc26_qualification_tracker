@@ -10,6 +10,7 @@ refresh cycle and shared between analyse() and qualification_probability(),
 so ESPN is only hit once regardless of which team is selected.
 """
 
+import copy
 import os
 import threading
 import time
@@ -102,7 +103,7 @@ def _build_knockout(model: WorldCupModel, events: list) -> dict | None:
         if m.round == "R32":
             r32[m.home] = m
             r32[m.away] = m
-    return {
+    kdata = {
         "bracket": b,
         "adv": adv,
         "title_odds": todds,
@@ -110,6 +111,61 @@ def _build_knockout(model: WorldCupModel, events: list) -> dict | None:
         "r32": r32,
         "names": {a: model.teams[a].name for a in valid},
     }
+    kdata["tree"] = _bracket_tree(kdata)
+    return kdata
+
+
+BRACKET_SLOT_OCCUPANTS = 4  # likely occupants shown per undecided later-round slot
+
+
+def _bracket_tree(kdata: dict) -> dict:
+    """Serialise the whole bracket for the frontend diagram (team-independent).
+
+    R32 slots carry concrete teams plus live score/state from their fixtures;
+    later rounds carry the top likely occupants from the advance distribution
+    (or the anchored winner once a tie is decided). ``children`` reshapes the
+    fixed wiring so the frontend can draw connectors without hardcoding it."""
+    b, adv, names, r32 = kdata["bracket"], kdata["adv"], kdata["names"], kdata["r32"]
+
+    children: dict[str, list[list[int]]] = {}
+    for (prnd, pidx), kids in kbracket.CHILDREN.items():
+        children.setdefault(prnd, [])
+        while len(children[prnd]) <= pidx:
+            children[prnd].append([])
+        children[prnd][pidx] = [cidx for _crnd, cidx in kids]
+
+    slots: dict[str, list[dict]] = {}
+    for rnd in kbracket.ROUNDS:
+        out = []
+        for slot in b.get(rnd, []):
+            if rnd == "R32":
+                m = r32.get(slot.team_a) or r32.get(slot.team_b)
+                out.append({
+                    "index": slot.index,
+                    "team_a": slot.team_a,
+                    "team_b": slot.team_b,
+                    "name_a": names.get(slot.team_a, slot.team_a) if slot.team_a else None,
+                    "name_b": names.get(slot.team_b, slot.team_b) if slot.team_b else None,
+                    "winner": slot.winner,
+                    "home_score": m.home_score if m else None,
+                    "away_score": m.away_score if m else None,
+                    "state": m.state if m else None,
+                    "kickoff": m.kickoff if m else None,
+                })
+            else:
+                dist = adv.get((rnd, slot.index), {})
+                top = sorted(dist.items(), key=lambda x: -x[1])[:BRACKET_SLOT_OCCUPANTS]
+                out.append({
+                    "index": slot.index,
+                    "winner": slot.winner,
+                    "adv": [
+                        {"abbr": a, "name": names.get(a, a), "p": p}
+                        for a, p in top if p > 1e-9
+                    ],
+                })
+        slots[rnd] = out
+
+    return {"rounds": list(kbracket.ROUNDS), "children": children, "slots": slots}
 
 
 def _knockout_payload(team: str, kdata: dict | None) -> dict | None:
@@ -126,6 +182,7 @@ def _knockout_payload(team: str, kdata: dict | None) -> dict | None:
         "reach": reach,
         "r32_tie": None,
         "opponents": {},
+        "path": [[s.round, s.index] for s in kbracket.target_path(b, team)],
     }
     if not in_bracket:
         payload["reach"] = {k: 0.0 for k in reach}
@@ -157,9 +214,44 @@ def _title_odds_list(kdata: dict | None) -> list | None:
     return [{"abbr": a, "name": names.get(a, a), "p": p} for a, p in top]
 
 
-def get_state(team: str) -> dict:
+def _forced_kdata(base: dict | None, team: str, result: str) -> dict | None:
+    """A knockout dataset with ``team``'s R32 tie forced to win/lose, recomputed.
+
+    Returns None (caller falls back to live odds) when there's no undecided R32
+    tie to condition on. Pure and in-memory: clones the bracket, pins the slot
+    winner — the same lever the engine already uses for decided ties — then
+    recomputes the advance distributions and title odds. Elo matchups are
+    memoised in the provider, so no network is hit."""
+    if base is None:
+        return None
+    src = base["bracket"]
+    slot = next((s for s in src["R32"] if team in (s.team_a, s.team_b)), None)
+    if slot is None or slot.winner is not None:
+        return None
+    opp = slot.team_b if slot.team_a == team else slot.team_a
+    if result == "lose" and opp is None:
+        return None  # bye — can't lose to nobody
+
+    b2 = copy.deepcopy(src)
+    s2 = b2["R32"][slot.index]
+    s2.winner = team if result == "win" else opp
+    adv2 = kbracket.advance_distributions(b2, _odds)
+    todds2 = kbracket.title_odds(b2, _odds, adv2)
+    forced = {
+        **base,
+        "bracket": b2,
+        "adv": adv2,
+        "title_odds": todds2,
+        "default_team": max(todds2, key=todds2.get) if todds2 else None,
+    }
+    forced["tree"] = _bracket_tree(forced)
+    return forced
+
+
+def get_state(team: str, whatif: str | None = None) -> dict:
+    key = f"{team}|{whatif or ''}"
     with _lock:
-        entry = _cache.get(team, {"state": None, "ts": 0.0})
+        entry = _cache.get(key, {"state": None, "ts": 0.0})
         age = time.time() - entry["ts"]
         if entry["state"] is None or age > _ttl(entry["state"]):
             try:
@@ -173,25 +265,31 @@ def get_state(team: str) -> dict:
                 state = analyse(model, team)
                 state["qualification"] = qualification_probability(model, team, _odds)
                 kdata = _model_cache["knockout"]
+                if whatif:
+                    kdata = _forced_kdata(kdata, team, whatif) or kdata
                 state["knockout"] = _knockout_payload(team, kdata)
                 state["title_odds"] = _title_odds_list(kdata)
+                state["bracket"] = kdata["tree"] if kdata else None
+                state["whatif"] = whatif
                 state["stale"] = False
-                _cache[team] = {"state": state, "ts": time.time()}
+                _cache[key] = {"state": state, "ts": time.time()}
             except HTTPException:
                 raise
             except Exception as exc:       # keep serving last good copy
                 if entry["state"] is not None:
                     entry["state"]["stale"] = True
                     entry["state"]["error"] = str(exc)
-                    _cache[team] = entry
+                    _cache[key] = entry
                 else:
                     raise
-        return _cache[team]["state"]
+        return _cache[key]["state"]
 
 
 @app.get("/api/state")
-def api_state(team: str = "SCO") -> JSONResponse:
-    return JSONResponse(get_state(team.upper()))
+def api_state(team: str = "SCO", whatif: str | None = None) -> JSONResponse:
+    if whatif not in ("win", "lose"):
+        whatif = None
+    return JSONResponse(get_state(team.upper(), whatif))
 
 
 @app.get("/healthz")

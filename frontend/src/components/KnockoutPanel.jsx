@@ -1,4 +1,5 @@
 import { kotime } from '../helpers.js'
+import { flag } from '../flags.js'
 
 function RouteChart({ reach }) {
   const stages = [
@@ -121,15 +122,46 @@ function R32Tie({ tie, target }) {
         <span>{status}</span>
       </div>
       <div className="ko-tie-teams">
-        <span className={tie.winner === tie.home ? 'adv' : ''}>{tie.home_name || tie.home}</span>
+        <span className={tie.winner === tie.home ? 'adv' : ''}>{flag(tie.home)} {tie.home_name || tie.home}</span>
         <span className="ko-sc">{hasScore ? `${tie.home_score}–${tie.away_score}` : 'v'}</span>
-        <span className={tie.winner === tie.away ? 'adv' : ''}>{tie.away_name || tie.away}</span>
+        <span className={tie.winner === tie.away ? 'adv' : ''}>{flag(tie.away)} {tie.away_name || tie.away}</span>
       </div>
     </div>
   )
 }
 
-export default function KnockoutPanel({ knockout, team, targetName, allTeams, onPickTeam }) {
+function WhatIf({ tie, target, targetName, whatif, onWhatif }) {
+  if (!tie || tie.winner != null) return null
+  const opp = tie.home === target ? tie.away_name || tie.away : tie.home_name || tie.home
+  const opts = [
+    { key: null, label: 'Live odds' },
+    { key: 'win', label: 'If win' },
+    { key: 'lose', label: 'If lose' },
+  ]
+  return (
+    <div className="whatif">
+      <span className="whatif-label">What if…</span>
+      <div className="whatif-pills">
+        {opts.map(o => (
+          <button
+            key={o.label}
+            className={`whatif-pill ${whatif === o.key ? 'is-active' : ''}`}
+            onClick={() => onWhatif(o.key)}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      {whatif && (
+        <div className="whatif-note">
+          Hypothetical — odds below assume {targetName} {whatif === 'win' ? 'beats' : 'loses to'} {opp}.
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function KnockoutPanel({ knockout, team, targetName, allTeams, onPickTeam, whatif, onWhatif }) {
   if (!knockout) return null
 
   if (!knockout.in_bracket) {
@@ -177,6 +209,9 @@ export default function KnockoutPanel({ knockout, team, targetName, allTeams, on
 
       <R32Tie tie={tie} target={team} />
 
+      <WhatIf tie={tie} target={team} targetName={targetName}
+        whatif={whatif} onWhatif={onWhatif} />
+
       {OPP_ROUNDS.some(r => (knockout.opponents?.[r.key] || []).length) && (
         <div className="ko-opps">
           <h2 className="section">Likely opponents</h2>
@@ -189,7 +224,7 @@ export default function KnockoutPanel({ knockout, team, targetName, allTeams, on
                   <div className="ko-opp-round">{r.label}</div>
                   {opps.map(o => (
                     <div key={o.abbr} className="ko-opp-row">
-                      <span className="ko-opp-team">{o.name || o.abbr}</span>
+                      <span className="ko-opp-team">{flag(o.abbr)} {o.name || o.abbr}</span>
                       <div className="ko-opp-track">
                         <div
                           className={`ko-opp-bar ${pClass(o.p)}`}

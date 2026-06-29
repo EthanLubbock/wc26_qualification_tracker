@@ -208,6 +208,13 @@ def _target_path(bracket: dict[str, list[Slot]], target: str) -> list[Slot]:
     return path
 
 
+def target_path(bracket: dict[str, list[Slot]], target: str) -> list[Slot]:
+    """Public wrapper: the slots ``target`` would occupy from its leaf up to the
+    Final, or [] if the team isn't in the bracket. The first element is the
+    team's leaf (R32) slot."""
+    return _target_path(bracket, target)
+
+
 def reach_probabilities(bracket: dict[str, list[Slot]], odds, target: str, adv=None) -> dict[str, float]:
     """{"R16","QF","SF","F","champion"} -> probability target reaches that round.
 

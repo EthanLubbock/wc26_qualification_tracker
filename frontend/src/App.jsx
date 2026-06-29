@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { signed } from './helpers.js'
+import { flag } from './flags.js'
 import Verdict from './components/Verdict.jsx'
 import Scores from './components/Scores.jsx'
 import Scenarios from './components/Scenarios.jsx'
@@ -8,9 +9,11 @@ import Likelihood from './components/Likelihood.jsx'
 import Requirements from './components/Requirements.jsx'
 import KnockoutPanel from './components/KnockoutPanel.jsx'
 import TitleOdds from './components/TitleOdds.jsx'
+import Bracket from './components/Bracket.jsx'
 
 const POLL_MS = 25000
 const INITIAL_TEAM = 'SCO'
+const TEAM_KEY = 'wc-team'
 
 function GroupTable({ rows, target }) {
   return (
@@ -25,7 +28,7 @@ function GroupTable({ rows, target }) {
         {(rows || []).map((t, i) => (
           <tr key={t.abbr} className={t.abbr === target ? 'sco' : ''}>
             <td className="rk">{i + 1}</td>
-            <td className="team">{t.name || t.abbr}</td>
+            <td className="team">{flag(t.abbr)} {t.name || t.abbr}</td>
             <td>{t.played}</td>
             <td>{t.points}</td>
             <td>{signed(t.gd)}</td>
@@ -49,7 +52,7 @@ function TeamSelect({ allTeams, team, onChange }) {
       {Object.entries(byGroup).sort().map(([g, teams]) => (
         <optgroup key={g} label={`Group ${g}`}>
           {teams.map(t => (
-            <option key={t.abbr} value={t.abbr}>{t.name || t.abbr}</option>
+            <option key={t.abbr} value={t.abbr}>{flag(t.abbr)} {t.name || t.abbr}</option>
           ))}
         </optgroup>
       ))}
@@ -58,29 +61,39 @@ function TeamSelect({ allTeams, team, onChange }) {
 }
 
 export default function App() {
-  const [team, setTeam] = useState(INITIAL_TEAM)
+  const [team, setTeam] = useState(() => localStorage.getItem(TEAM_KEY) || INITIAL_TEAM)
+  const [whatif, setWhatif] = useState(null)   // null | 'win' | 'lose'
   const [state, setState] = useState(null)
   const [connErr, setConnErr] = useState(false)
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState('group')
   const cacheRef = useRef(new Map())
   const firstStateRef = useRef(false)
+  const hadStored = useRef(localStorage.getItem(TEAM_KEY) != null)
+
+  // Remember the chosen team across reloads; a fresh pick is never a what-if.
+  useEffect(() => {
+    localStorage.setItem(TEAM_KEY, team)
+    setWhatif(null)
+  }, [team])
 
   useEffect(() => {
     let alive = true
     let isFirst = true
+    const cacheKey = team + '|' + (whatif || '')
 
-    if (cacheRef.current.has(team)) {
-      setState(cacheRef.current.get(team))
+    if (cacheRef.current.has(cacheKey)) {
+      setState(cacheRef.current.get(cacheKey))
     }
     setLoading(true)
 
     const tick = async () => {
       try {
-        const res = await fetch(`/api/state?team=${team}`, { cache: 'no-store' })
+        const url = `/api/state?team=${team}` + (whatif ? `&whatif=${whatif}` : '')
+        const res = await fetch(url, { cache: 'no-store' })
         const s = await res.json()
         if (alive) {
-          cacheRef.current.set(team, s)
+          cacheRef.current.set(cacheKey, s)
           setState(s)
           setConnErr(false)
           if (isFirst) { setLoading(false); isFirst = false }
@@ -95,17 +108,18 @@ export default function App() {
     tick()
     const id = setInterval(tick, POLL_MS)
     return () => { alive = false; clearInterval(id) }
-  }, [team])
+  }, [team, whatif])
 
   // Once the first payload arrives during the knockout phase, focus the
   // Knockout tab and, if the default team (SCO) didn't make it, switch to a
-  // live team so the view loads populated. Runs once; manual picks stick.
+  // live team so the view loads populated. Runs once; a stored preference or a
+  // manual pick is respected over the auto-switch.
   useEffect(() => {
     if (firstStateRef.current || !state) return
     if (state.phase === 'knockout') {
       setView('knockout')
       const ko = state.knockout
-      if (team === INITIAL_TEAM && ko && !ko.in_bracket && ko.default_team) {
+      if (team === INITIAL_TEAM && !hadStored.current && ko && !ko.in_bracket && ko.default_team) {
         setTeam(ko.default_team)
       }
     }
@@ -181,9 +195,23 @@ export default function App() {
                     targetName={targetName}
                     allTeams={state.all_teams}
                     onPickTeam={setTeam}
+                    whatif={whatif}
+                    onWhatif={setWhatif}
                   />
                   <h2 className="section" style={{ marginTop: 26 }}>Title race</h2>
                   <TitleOdds titleOdds={state.title_odds} target={team} />
+
+                  {state.bracket && (
+                    <>
+                      <h2 className="section" style={{ marginTop: 26 }}>Full bracket</h2>
+                      <Bracket
+                        bracket={state.bracket}
+                        path={state.knockout?.path}
+                        team={team}
+                        onPickTeam={setTeam}
+                      />
+                    </>
+                  )}
                 </>
               )}
             </>
