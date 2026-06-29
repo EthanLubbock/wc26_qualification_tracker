@@ -1,5 +1,86 @@
 import { kotime } from '../helpers.js'
 
+function RouteChart({ reach }) {
+  const stages = [
+    { label: 'R32',    p: 1 },
+    { label: 'R16',    p: reach.R16      || 0 },
+    { label: 'QF',     p: reach.QF       || 0 },
+    { label: 'SF',     p: reach.SF       || 0 },
+    { label: 'Final',  p: reach.F        || 0 },
+    { label: 'Winner', p: reach.champion || 0 },
+  ]
+
+  const W = 560, H = 160
+  const padL = 42, padR = 12, padT = 14, padB = 28
+  const innerW = W - padL - padR
+  const innerH = H - padT - padB
+  const yBot = padT + innerH
+
+  const xOf = i => padL + (i / (stages.length - 1)) * innerW
+  const yOf = p => padT + (1 - p) * innerH
+  const pts = stages.map((s, i) => [xOf(i), yOf(s.p)])
+
+  const smooth = points => {
+    let d = `M${points[0][0]},${points[0][1]}`
+    for (let i = 0; i < points.length - 1; i++) {
+      const [x0, y0] = points[i], [x1, y1] = points[i + 1]
+      const cx = (x1 - x0) * 0.4
+      d += ` C${x0 + cx},${y0} ${x1 - cx},${y1} ${x1},${y1}`
+    }
+    return d
+  }
+
+  const linePath = smooth(pts)
+  const areaPath = `${linePath} L${pts[pts.length - 1][0]},${yBot} L${pts[0][0]},${yBot} Z`
+  const dotFill = p => p >= 0.999 ? '#2bd47d' : p >= 0.55 ? '#2bd47d' : p >= 0.25 ? '#f4b740' : '#ef5a6a'
+  const labelPct = p => p >= 0.999 ? '100%' : p < 0.005 ? '<1%' : `${Math.round(p * 100)}%`
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="route-chart" role="img" aria-label="Route to the title probability">
+      <defs>
+        <linearGradient id="rc-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#2f80ed" stopOpacity="0.22" />
+          <stop offset="100%" stopColor="#2f80ed" stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+
+      {[0, 25, 50, 75, 100].map(t => (
+        <g key={t}>
+          <line x1={padL} y1={yOf(t / 100)} x2={W - padR} y2={yOf(t / 100)}
+            stroke="#143257" strokeWidth="1" />
+          <text x={padL - 5} y={yOf(t / 100) + 4} textAnchor="end"
+            fontSize="10" fill="#8aa6c4" fontFamily="Inter,sans-serif">
+            {t}%
+          </text>
+        </g>
+      ))}
+
+      {pts.map(([x], i) => (
+        <line key={i} x1={x} y1={padT} x2={x} y2={yBot}
+          stroke="#143257" strokeWidth="1" strokeDasharray="2 4" />
+      ))}
+
+      <path d={areaPath} fill="url(#rc-fill)" />
+      <path d={linePath} fill="none" stroke="#2f80ed" strokeWidth="2.5"
+        strokeLinejoin="round" strokeLinecap="round" />
+
+      {stages.map((s, i) => (
+        <g key={s.label}>
+          <circle cx={pts[i][0]} cy={pts[i][1]} r="4.5"
+            fill={dotFill(s.p)} stroke="#0c2440" strokeWidth="1.5">
+            <title>{s.label}: {labelPct(s.p)}</title>
+          </circle>
+          <text x={pts[i][0]} y={H - padB + 14} textAnchor="middle"
+            fontSize="10" fill="#8aa6c4"
+            fontFamily="'Saira Condensed',sans-serif" fontWeight="600" letterSpacing="0.08em">
+            {s.label.toUpperCase()}
+          </text>
+        </g>
+      ))}
+    </svg>
+  )
+}
+
 const pct = p => {
   const v = (p || 0) * 100
   if (v >= 99.95) return '100%'
@@ -74,6 +155,7 @@ export default function KnockoutPanel({ knockout, team, targetName, allTeams, on
 
   return (
     <>
+      <RouteChart reach={reach} />
       <div className="route">
         <div className={`route-cell ${r32Secured ? 'secured' : eliminated ? 'dead' : ''}`}>
           <div className="route-stage">R32</div>

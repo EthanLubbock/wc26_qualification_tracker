@@ -139,6 +139,9 @@ footer a{color:var(--saltire)}
 .banner{background:rgba(43,212,125,.1);border:1px solid rgba(43,212,125,.4);color:var(--green);
         border-radius:10px;padding:9px 13px;font-size:13px;margin-bottom:14px}
 
+.route-chart{display:block;width:100%;height:auto;border-radius:10px;
+             background:var(--navy-800);border:1px solid var(--navy-700);
+             margin:0 0 14px;padding:2px 0}
 .route{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:4px 0 18px}
 .route-cell{background:var(--navy-800);border:1px solid var(--navy-700);border-radius:12px;
             padding:12px 6px;text-align:center}
