@@ -1,5 +1,4 @@
 import { kotime } from '../helpers.js'
-import { flag } from '../flags.js'
 
 function RouteChart({ reach }) {
   const stages = [
@@ -71,7 +70,8 @@ function RouteChart({ reach }) {
             fill={dotFill(s.p)} stroke="#0c2440" strokeWidth="1.5">
             <title>{s.label}: {labelPct(s.p)}</title>
           </circle>
-          <text x={pts[i][0]} y={H - padB + 14} textAnchor="middle"
+          <text x={pts[i][0]} y={H - padB + 14}
+            textAnchor={i === 0 ? 'start' : i === stages.length - 1 ? 'end' : 'middle'}
             fontSize="10" fill="#8aa6c4"
             fontFamily="'Saira Condensed',sans-serif" fontWeight="600" letterSpacing="0.08em">
             {s.label.toUpperCase()}
@@ -122,9 +122,9 @@ function R32Tie({ tie, target }) {
         <span>{status}</span>
       </div>
       <div className="ko-tie-teams">
-        <span className={tie.winner === tie.home ? 'adv' : ''}>{flag(tie.home)} {tie.home_name || tie.home}</span>
+        <span className={tie.winner === tie.home ? 'adv' : ''}>{tie.home_name || tie.home}</span>
         <span className="ko-sc">{hasScore ? `${tie.home_score}–${tie.away_score}` : 'v'}</span>
-        <span className={tie.winner === tie.away ? 'adv' : ''}>{flag(tie.away)} {tie.away_name || tie.away}</span>
+        <span className={tie.winner === tie.away ? 'adv' : ''}>{tie.away_name || tie.away}</span>
       </div>
     </div>
   )
@@ -224,7 +224,7 @@ export default function KnockoutPanel({ knockout, team, targetName, allTeams, on
                   <div className="ko-opp-round">{r.label}</div>
                   {opps.map(o => (
                     <div key={o.abbr} className="ko-opp-row">
-                      <span className="ko-opp-team">{flag(o.abbr)} {o.name || o.abbr}</span>
+                      <span className="ko-opp-team">{o.name || o.abbr}</span>
                       <div className="ko-opp-track">
                         <div
                           className={`ko-opp-bar ${pClass(o.p)}`}

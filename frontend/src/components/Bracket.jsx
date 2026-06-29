@@ -1,5 +1,3 @@
-import { flag } from '../flags.js'
-
 // Layout constants (px). The bracket is laid out on an absolute canvas so the
 // SVG connector layer and the HTML match boxes share one coordinate system.
 const ROW_H = 44     // vertical band per R32 slot
@@ -67,7 +65,7 @@ export default function Bracket({ bracket, path, team, onPickTeam }) {
   const Name = ({ abbr, name, cls }) =>
     abbr ? (
       <button className={`br-team ${cls || ''}`} onClick={() => onPickTeam(abbr)}>
-        {flag(abbr)} {name || abbr}
+        {name || abbr}
       </button>
     ) : (
       <span className="br-team br-tbd">—</span>
@@ -86,6 +84,27 @@ export default function Bracket({ bracket, path, team, onPickTeam }) {
           (slots[rnd] || []).map((slot, i) => {
             const top = centers[rnd][i] - BOX_H / 2
             const lit = onPath.has(`${rnd}:${i}`)
+
+            // For non-leaf undecided slots, show the most likely participant from
+            // each child feeder — this correctly represents "who is likely to play
+            // here" rather than "who is most likely to win here overall," which
+            // would cause the same team to appear in multiple consecutive boxes.
+            let participants = null
+            if (rnd !== rounds[0] && !slot.winner) {
+              const prev = rounds[r - 1]
+              const cids = (children[rnd] || [])[i] || []
+              const topOf = ci => {
+                const cs = slots[prev]?.[ci]
+                if (!cs) return null
+                if (cs.winner) return cs.adv?.find(x => x.abbr === cs.winner) || { abbr: cs.winner, name: cs.winner }
+                return cs.adv?.[0] || null
+              }
+              const pctOf = abbr => (slot.adv || []).find(x => x.abbr === abbr)?.p
+              participants = [topOf(cids[0]), topOf(cids[1])]
+                .filter(Boolean)
+                .map(t => ({ ...t, displayP: pctOf(t.abbr) }))
+            }
+
             return (
               <div
                 key={`${rnd}:${i}`}
@@ -111,14 +130,16 @@ export default function Bracket({ bracket, path, team, onPickTeam }) {
                   </>
                 ) : slot.winner ? (
                   <div className="br-row">
-                    <Name abbr={slot.winner} name={slot.winner} cls="adv" />
+                    <Name abbr={slot.winner}
+                      name={slot.adv?.find(x => x.abbr === slot.winner)?.name || slot.winner}
+                      cls="adv" />
                     <span className="br-sc">✓</span>
                   </div>
                 ) : (
-                  (slot.adv || []).slice(0, 2).map(o => (
-                    <div key={o.abbr} className="br-row">
-                      <Name abbr={o.abbr} name={o.name} />
-                      <span className="br-p">{pct(o.p)}</span>
+                  (participants || []).map((t, j) => (
+                    <div key={t.abbr || j} className="br-row">
+                      <Name abbr={t.abbr} name={t.name} />
+                      {t.displayP != null && <span className="br-p">{pct(t.displayP)}</span>}
                     </div>
                   ))
                 )}
@@ -128,9 +149,12 @@ export default function Bracket({ bracket, path, team, onPickTeam }) {
         )}
 
         {champion && champY != null && (
-          <div className="br-box br-champ" style={{ left: xLeft(rounds.length), top: champY - BOX_H / 2 }}>
+          <div className="br-box br-champ" style={{ left: xLeft(rounds.length), top: champY - BOX_H / 2, width: BOX_W }}>
             <div className="br-champ-label">Champion</div>
             <Name abbr={champion.abbr} name={champion.name || champion.abbr} cls="adv" />
+            {champion.p != null && champion.p < 0.999 && (
+              <span className="br-p">{pct(champion.p)}</span>
+            )}
           </div>
         )}
       </div>

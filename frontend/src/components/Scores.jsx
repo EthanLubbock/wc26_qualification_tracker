@@ -1,5 +1,4 @@
 import { kotime } from '../helpers.js'
-import { flag } from '../flags.js'
 
 function MatchCard({ m }) {
   if (!m) return null
@@ -10,8 +9,8 @@ function MatchCard({ m }) {
   return (
     <div className="match">
       <div className="lbl">{label}</div>
-      <div className="row"><span className="side">{flag(m.home)} {m.home_name || m.home}</span><span className="sc">{show ? hs : ''}</span></div>
-      <div className="row"><span className="side">{flag(m.away)} {m.away_name || m.away}</span><span className="sc">{show ? as : ''}</span></div>
+      <div className="row"><span className="side">{m.home_name || m.home}</span><span className="sc">{show ? hs : ''}</span></div>
+      <div className="row"><span className="side">{m.away_name || m.away}</span><span className="sc">{show ? as : ''}</span></div>
       <div className="state">
         {live ? <><span className="dot" />Live</> : done ? 'Full time' : `Kick-off ${kotime(m.kickoff)}`}
       </div>

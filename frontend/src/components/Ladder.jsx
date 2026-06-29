@@ -1,5 +1,4 @@
 import { signed } from '../helpers.js'
-import { flag } from '../flags.js'
 
 export default function Ladder({ thirds, cutoff, target }) {
   return (
@@ -23,7 +22,7 @@ export default function Ladder({ thirds, cutoff, target }) {
               <tr key={`${t.abbr}-${i}`} className={cls}>
                 <td className="rk">{rank}</td>
                 <td className="team">
-                  {flag(t.abbr)} {t.name || t.abbr}
+                  {t.name || t.abbr}
                   {!t.group_complete && <span className="prov">prov.</span>}
                 </td>
                 <td>{t.group}</td>

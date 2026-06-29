@@ -1,6 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
 import { signed } from './helpers.js'
-import { flag } from './flags.js'
 import Verdict from './components/Verdict.jsx'
 import Scores from './components/Scores.jsx'
 import Scenarios from './components/Scenarios.jsx'
@@ -28,7 +27,7 @@ function GroupTable({ rows, target }) {
         {(rows || []).map((t, i) => (
           <tr key={t.abbr} className={t.abbr === target ? 'sco' : ''}>
             <td className="rk">{i + 1}</td>
-            <td className="team">{flag(t.abbr)} {t.name || t.abbr}</td>
+            <td className="team">{t.name || t.abbr}</td>
             <td>{t.played}</td>
             <td>{t.points}</td>
             <td>{signed(t.gd)}</td>
@@ -52,7 +51,7 @@ function TeamSelect({ allTeams, team, onChange }) {
       {Object.entries(byGroup).sort().map(([g, teams]) => (
         <optgroup key={g} label={`Group ${g}`}>
           {teams.map(t => (
-            <option key={t.abbr} value={t.abbr}>{flag(t.abbr)} {t.name || t.abbr}</option>
+            <option key={t.abbr} value={t.abbr}>{t.name || t.abbr}</option>
           ))}
         </optgroup>
       ))}
