@@ -13,6 +13,21 @@ export function kotime(iso) {
   }
 }
 
+export function koDatetime(iso) {
+  try {
+    const d = new Date(iso)
+    const now = new Date()
+    const diffDays = (d - now) / 86400000
+    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    const prefix = diffDays <= 7
+      ? d.toLocaleDateString([], { weekday: 'short' })
+      : d.toLocaleDateString([], { day: 'numeric', month: 'short' })
+    return `${prefix} ${time}`
+  } catch {
+    return ''
+  }
+}
+
 // Normalise a match into the target team's perspective.
 export function targetLine(m, target) {
   if (!m) return null

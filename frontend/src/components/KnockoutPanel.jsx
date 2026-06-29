@@ -1,4 +1,4 @@
-import { kotime } from '../helpers.js'
+import { koDatetime } from '../helpers.js'
 
 function RouteChart({ reach }) {
   const stages = [
@@ -112,7 +112,7 @@ function R32Tie({ tie, target }) {
   const decided = tie.winner != null
   const live = tie.state === 'in'
   const hasScore = tie.home_score != null && tie.away_score != null
-  const status = live ? 'Live' : decided ? 'Full time' : `Kick-off ${kotime(tie.kickoff)}`
+  const status = live ? 'Live' : decided ? 'Full time' : `Kick-off ${koDatetime(tie.kickoff)}`
   const won = decided && tie.winner === target
   return (
     <div className={`ko-tie ${decided ? (won ? 'win' : 'lose') : ''}`}>
