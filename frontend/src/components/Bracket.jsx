@@ -1,6 +1,12 @@
 // Layout constants (px). The bracket is laid out on an absolute canvas so the
 // SVG connector layer and the HTML match boxes share one coordinate system.
-const ROW_H = 44     // vertical band per R32 slot
+//
+// The diagram is mirrored: the top half of the draw flows left→right and the
+// bottom half flows right→left, both converging on the Final in the centre.
+// Within each half, R32 ties are ordered by a depth-first walk of the bracket
+// tree so a slot's two feeders are always vertically adjacent — that's what
+// keeps the connectors nested instead of crossing.
+const ROW_H = 44     // vertical band per R32 slot (per side)
 const BOX_H = 38
 const BOX_W = 134
 const COL_W = 172    // > BOX_W to leave room for connectors
@@ -16,50 +22,99 @@ const pct = p => {
 export default function Bracket({ bracket, path, team, onPickTeam }) {
   if (!bracket?.slots) return null
   const { rounds, children, slots } = bracket
+  const nRounds = rounds.length
+  const finalR = nRounds - 1            // round index of the Final
+  const finalCol = nRounds - 1          // centre column
+  const colCount = 2 * (nRounds - 1) + 1
 
-  // Centre y for every slot: R32 evenly spaced, later rounds at the midpoint of
-  // their two children (from the fixed wiring the backend sends).
-  const centers = {}
-  centers[rounds[0]] = (slots[rounds[0]] || []).map((_, i) => PAD + i * ROW_H + ROW_H / 2)
-  for (let r = 1; r < rounds.length; r++) {
-    const rnd = rounds[r], prev = rounds[r - 1]
-    const kids = children[rnd] || []
-    centers[rnd] = (slots[rnd] || []).map((_, i) => {
-      const [a, b] = kids[i] || [0, 0]
-      return (centers[prev][a] + centers[prev][b]) / 2
-    })
+  const kidsOf = (r, idx) => (children[rounds[r]] || [])[idx] || []
+  // R32 slot indices under a slot, in DFS (top→bottom) order.
+  const leavesUnder = (r, idx) =>
+    r === 0 ? [idx] : kidsOf(r, idx).flatMap(ci => leavesUnder(r - 1, ci))
+
+  const finalKids = kidsOf(finalR, 0)   // [topSF, bottomSF]
+  const topSF = finalKids[0], botSF = finalKids[1]
+  const topLeaves = topSF != null ? leavesUnder(finalR - 1, topSF) : []
+  const botLeaves = botSF != null ? leavesUnder(finalR - 1, botSF) : []
+
+  // Side map: 'L' (left half), 'R' (right half), 'F' (final). Propagated down
+  // each Semi-final's subtree.
+  const side = {}
+  const mark = (r, idx, s) => {
+    side[`${r}:${idx}`] = s
+    if (r > 0) kidsOf(r, idx).forEach(ci => mark(r - 1, ci, s))
+  }
+  side[`${finalR}:0`] = 'F'
+  if (topSF != null) mark(finalR - 1, topSF, 'L')
+  if (botSF != null) mark(finalR - 1, botSF, 'R')
+  const sideOf = (r, idx) => side[`${r}:${idx}`] || 'L'
+  const colOf = (r, idx) => {
+    const s = sideOf(r, idx)
+    if (s === 'F') return finalCol
+    return s === 'L' ? r : colCount - 1 - r
   }
 
-  const xLeft = r => PAD + r * COL_W
-  const xRight = r => xLeft(r) + BOX_W
-  const nR32 = (slots[rounds[0]] || []).length
-  const height = PAD * 2 + nR32 * ROW_H
-  const width = xLeft(rounds.length) + BOX_W + PAD   // room for the champion node
+  // Vertical centre for every slot. R32 leaves are evenly spaced (both halves
+  // share the same vertical range); later rounds sit at the midpoint of their
+  // two children.
+  const yByLeaf = {}
+  topLeaves.forEach((idx, k) => { yByLeaf[idx] = PAD + k * ROW_H + ROW_H / 2 })
+  botLeaves.forEach((idx, k) => { yByLeaf[idx] = PAD + k * ROW_H + ROW_H / 2 })
+  const yCache = {}
+  const centerY = (r, idx) => {
+    const key = `${r}:${idx}`
+    if (key in yCache) return yCache[key]
+    let y
+    if (r === 0) {
+      y = yByLeaf[idx] ?? PAD + idx * ROW_H + ROW_H / 2
+    } else {
+      const ys = kidsOf(r, idx).map(ci => centerY(r - 1, ci))
+      y = ys.length ? ys.reduce((a, b) => a + b, 0) / ys.length : PAD + ROW_H / 2
+    }
+    yCache[key] = y
+    return y
+  }
+
+  const xLeft = c => PAD + c * COL_W
+  const xRight = c => xLeft(c) + BOX_W
+
+  const rowsPerSide = Math.max(topLeaves.length, botLeaves.length, 1)
+  const CHAMP_GAP = 60                  // room for the champion node below the Final
+  const height = PAD * 2 + rowsPerSide * ROW_H + CHAMP_GAP
+  const width = xLeft(colCount - 1) + BOX_W + PAD
 
   const onPath = new Set((path || []).map(([rnd, i]) => `${rnd}:${i}`))
 
-  // Connector polylines: each child elbows out to its parent's left edge.
+  // Connector polylines: each child elbows toward its parent's facing edge —
+  // rightward in the left half, leftward in the right half.
   const lines = []
-  for (let r = 1; r < rounds.length; r++) {
-    const rnd = rounds[r], prev = rounds[r - 1]
-    const kids = children[rnd] || []
-    ;(slots[rnd] || []).forEach((_, i) => {
-      const py = centers[rnd][i]
-      const midX = (xRight(r - 1) + xLeft(r)) / 2
-      ;(kids[i] || []).forEach(c => {
-        const cy = centers[prev][c]
-        lines.push(`M${xRight(r - 1)},${cy} H${midX} V${py} H${xLeft(r)}`)
+  for (let r = 1; r <= finalR; r++) {
+    ;(slots[rounds[r]] || []).forEach((_, i) => {
+      const py = centerY(r, i)
+      const cP = colOf(r, i)
+      kidsOf(r, i).forEach(ci => {
+        const cy = centerY(r - 1, ci)
+        const cC = colOf(r - 1, ci)
+        if (cC < cP) {
+          const midX = (xRight(cC) + xLeft(cP)) / 2
+          lines.push(`M${xRight(cC)},${cy} H${midX} V${py} H${xLeft(cP)}`)
+        } else {
+          const midX = (xRight(cP) + xLeft(cC)) / 2
+          lines.push(`M${xLeft(cC)},${cy} H${midX} V${py} H${xRight(cP)}`)
+        }
       })
     })
   }
-  // Champion stub off the Final.
-  const champY = centers[rounds[rounds.length - 1]]?.[0]
-  const finalSlot = slots[rounds[rounds.length - 1]]?.[0]
+
+  // Champion node, centred below the Final with a short vertical stub.
+  const finalSlot = slots[rounds[finalR]]?.[0]
   const champion = finalSlot?.winner
-    ? { abbr: finalSlot.winner }
+    ? { abbr: finalSlot.winner, name: finalSlot.adv?.find(x => x.abbr === finalSlot.winner)?.name || finalSlot.winner }
     : finalSlot?.adv?.[0] || null
-  if (champY != null) {
-    lines.push(`M${xRight(rounds.length - 1)},${champY} H${xLeft(rounds.length)}`)
+  const finalY = centerY(finalR, 0)
+  const champY = finalY + BOX_H / 2 + 24
+  if (champion) {
+    lines.push(`M${xLeft(finalCol) + BOX_W / 2},${finalY + BOX_H / 2} V${champY - BOX_H / 2}`)
   }
 
   const Name = ({ abbr, name, cls }) =>
@@ -82,49 +137,53 @@ export default function Bracket({ bracket, path, team, onPickTeam }) {
 
         {rounds.map((rnd, r) =>
           (slots[rnd] || []).map((slot, i) => {
-            const top = centers[rnd][i] - BOX_H / 2
+            const top = centerY(r, i) - BOX_H / 2
             const lit = onPath.has(`${rnd}:${i}`)
+            const mirror = sideOf(r, i) === 'R'
+            const rowStyle = mirror ? { flexDirection: 'row-reverse' } : undefined
 
             // For non-leaf undecided slots, show the most likely participant from
-            // each child feeder — this correctly represents "who is likely to play
-            // here" rather than "who is most likely to win here overall," which
-            // would cause the same team to appear in multiple consecutive boxes.
+            // each child feeder — "who is likely to play here" rather than "who is
+            // most likely to win here," which would repeat a team across boxes.
+            // A participant whose feeder tie is already decided is confirmed to be
+            // here, so it carries no probability.
             let participants = null
             if (rnd !== rounds[0] && !slot.winner) {
-              const prev = rounds[r - 1]
-              const cids = (children[rnd] || [])[i] || []
+              const cids = kidsOf(r, i)
               const topOf = ci => {
-                const cs = slots[prev]?.[ci]
+                const cs = slots[rounds[r - 1]]?.[ci]
                 if (!cs) return null
-                if (cs.winner) return cs.adv?.find(x => x.abbr === cs.winner) || { abbr: cs.winner, name: cs.winner }
-                if (cs.adv?.length) return cs.adv[0]
-                // R32 slot with no adv (teams not yet assigned): fall back to team_a
-                if (cs.team_a) return { abbr: cs.team_a, name: cs.name_a }
-                if (cs.team_b) return { abbr: cs.team_b, name: cs.name_b }
+                if (cs.winner) {
+                  const found = cs.adv?.find(x => x.abbr === cs.winner)
+                  return { abbr: cs.winner, name: found?.name || cs.winner, confirmed: true }
+                }
+                if (cs.adv?.length) return { ...cs.adv[0], confirmed: false }
+                // R32 slot with no adv (teams not yet assigned): fall back to team_a/b
+                if (cs.team_a) return { abbr: cs.team_a, name: cs.name_a, confirmed: false }
+                if (cs.team_b) return { abbr: cs.team_b, name: cs.name_b, confirmed: false }
                 return null
               }
               const pctOf = abbr => (slot.adv || []).find(x => x.abbr === abbr)?.p
-              participants = [topOf(cids[0]), topOf(cids[1])]
-                .filter(Boolean)
-                .map(t => ({ ...t, displayP: pctOf(t.abbr) }))
+              participants = cids.map(topOf).filter(Boolean)
+                .map(t => ({ ...t, displayP: t.confirmed ? null : pctOf(t.abbr) }))
             }
 
             return (
               <div
                 key={`${rnd}:${i}`}
                 className={`br-box ${lit ? 'lit' : ''}`}
-                style={{ left: xLeft(r), top, width: BOX_W }}
+                style={{ left: xLeft(colOf(r, i)), top, width: BOX_W }}
               >
                 {rnd === rounds[0] ? (
                   <>
-                    <div className="br-row">
+                    <div className="br-row" style={rowStyle}>
                       <Name abbr={slot.team_a} name={slot.name_a}
                         cls={slot.winner && slot.winner !== slot.team_a ? 'out' : slot.winner === slot.team_a ? 'adv' : ''} />
                       <span className="br-sc">
                         {slot.home_score != null ? slot.home_score : ''}
                       </span>
                     </div>
-                    <div className="br-row">
+                    <div className="br-row" style={rowStyle}>
                       <Name abbr={slot.team_b} name={slot.name_b}
                         cls={slot.winner && slot.winner !== slot.team_b ? 'out' : slot.winner === slot.team_b ? 'adv' : ''} />
                       <span className="br-sc">
@@ -133,7 +192,7 @@ export default function Bracket({ bracket, path, team, onPickTeam }) {
                     </div>
                   </>
                 ) : slot.winner ? (
-                  <div className="br-row">
+                  <div className="br-row" style={rowStyle}>
                     <Name abbr={slot.winner}
                       name={slot.adv?.find(x => x.abbr === slot.winner)?.name || slot.winner}
                       cls="adv" />
@@ -141,7 +200,7 @@ export default function Bracket({ bracket, path, team, onPickTeam }) {
                   </div>
                 ) : (
                   (participants || []).map((t, j) => (
-                    <div key={t.abbr || j} className="br-row">
+                    <div key={t.abbr || j} className="br-row" style={rowStyle}>
                       <Name abbr={t.abbr} name={t.name} />
                       {t.displayP != null && <span className="br-p">{pct(t.displayP)}</span>}
                     </div>
@@ -152,8 +211,8 @@ export default function Bracket({ bracket, path, team, onPickTeam }) {
           })
         )}
 
-        {champion && champY != null && (
-          <div className="br-box br-champ" style={{ left: xLeft(rounds.length), top: champY - BOX_H / 2, width: BOX_W }}>
+        {champion && (
+          <div className="br-box br-champ" style={{ left: xLeft(finalCol), top: champY - BOX_H / 2, width: BOX_W }}>
             <div className="br-champ-label">Champion</div>
             <Name abbr={champion.abbr} name={champion.name || champion.abbr} cls="adv" />
             {champion.p != null && champion.p < 0.999 && (

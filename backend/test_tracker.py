@@ -389,10 +389,15 @@ print("tournament_phase: pending group -> 'group', all complete -> 'knockout': P
 # Knockout parsing: round label -> ROUNDS code, winner from scores, 3rd-place skipped.
 # ---------------------------------------------------------------------------
 
-def KE(eid, note, h, a, hs, as_, state="post", completed=True):
+def KE(eid, note, h, a, hs, as_, state="post", completed=True, winner=None):
+    # winner: None, "home", or "away" — sets ESPN's competitor["winner"] flag,
+    # which is how shootout results (level 90/120-min score) are conveyed.
     def comp(side, ab, sc):
-        return {"homeAway": side, "team": {"abbreviation": ab, "shortDisplayName": ab},
-                "score": None if sc is None else str(sc)}
+        c = {"homeAway": side, "team": {"abbreviation": ab, "shortDisplayName": ab},
+             "score": None if sc is None else str(sc)}
+        if winner is not None:
+            c["winner"] = (side == winner)
+        return c
     return {
         "id": eid, "date": "2026-06-28T19:00Z",
         "competitions": [{
@@ -405,16 +410,18 @@ def KE(eid, note, h, a, hs, as_, state="post", completed=True):
 ko_events = [
     KE("760486", "FIFA World Cup, Round of 32", "RSA", "CAN", 1, 2),
     KE("760487", "FIFA World Cup, Round of 32", "BRA", "JPN", None, None, state="pre", completed=False),
+    KE("760488", "FIFA World Cup, Round of 32", "NED", "MAR", 1, 1, winner="home"),  # decided on penalties
     KE("760510", "FIFA World Cup, Quarterfinals", "RD16 W1", "RD16 W2", None, None, state="pre", completed=False),
     KE("760516", "FIFA World Cup, 3rd-Place Match", "SF L1", "SF L2", None, None, state="pre", completed=False),
     KE("999999", "FIFA World Cup, Group A", "T1", "T2", 0, 0),   # group fixture, ignored
 ]
 km = parse_knockout_matches(ko_events)
-assert [m.round for m in km] == ["R32", "R32", "QF"], [m.round for m in km]   # 3rd-place + group dropped
+assert [m.round for m in km] == ["R32", "R32", "R32", "QF"], [m.round for m in km]   # 3rd-place + group dropped
 assert km[0].winner == "CAN" and km[0].completed, km[0]      # winner from higher score
 assert km[1].winner is None, km[1]                            # undecided tie
+assert km[2].winner == "NED", km[2]                          # level score, winner from ESPN flag (penalties)
 assert km[0].order == 760486, km[0].order
-print("parse_knockout_matches: round labels, winner derivation, 3rd-place/group skipped: PASS")
+print("parse_knockout_matches: round labels, winner (scores + shootout flag), 3rd-place/group skipped: PASS")
 
 
 print("\nAll assertions passed.")

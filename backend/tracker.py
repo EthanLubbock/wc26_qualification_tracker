@@ -279,9 +279,17 @@ def parse_knockout_matches(events: list) -> list[KnockoutMatch]:
         hs, as_ = score(home), score(away)
         h_abbr = home["team"]["abbreviation"]
         a_abbr = away["team"]["abbreviation"]
+        # ESPN sets competitor["winner"] = True on the advancing side — including
+        # ties settled on penalties, where the 90/120-min score is level. Trust
+        # that flag first; fall back to the scoreline only if it's absent.
         winner = None
-        if completed and hs is not None and as_ is not None:
-            winner = h_abbr if hs > as_ else a_abbr if as_ > hs else None
+        if completed:
+            if home.get("winner"):
+                winner = h_abbr
+            elif away.get("winner"):
+                winner = a_abbr
+            elif hs is not None and as_ is not None and hs != as_:
+                winner = h_abbr if hs > as_ else a_abbr
 
         try:
             order = int(ev.get("id"))
