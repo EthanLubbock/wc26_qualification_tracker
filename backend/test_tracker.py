@@ -244,6 +244,16 @@ assert abs(p2["p_a"] + p2["p_draw"] + p2["p_b"] - 1.0) < 1e-9, p2
 assert p2["supremacy"] == 0.8
 print("EloOdds cache hit works: PASS")
 
+# Same cache entry, queried in the *reverse* order — must re-orient (swap
+# p_a/p_b, negate supremacy), not hand back Spain's numbers labelled as
+# Germany's. This is the bug behind mismatched R16 odds depending on which
+# team's page loaded the pairing first.
+p2r = elo.match_probabilities("GER", "ESP")
+assert abs(p2r["p_a"] - 0.2) < 1e-9 and abs(p2r["p_b"] - 0.6) < 1e-9, p2r
+assert abs(p2r["p_draw"] - 0.2) < 1e-9, p2r
+assert p2r["supremacy"] == -0.8, p2r
+print("EloOdds cache hit re-orients for the reverse (away, home) query: PASS")
+
 # Unknown code falls back to NeutralOdds (no crash).
 p3 = elo.match_probabilities("FAKE1", "FAKE2")
 assert abs(p3["p_a"] + p3["p_draw"] + p3["p_b"] - 1.0) < 1e-9, p3

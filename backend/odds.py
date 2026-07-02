@@ -70,20 +70,35 @@ class EloOdds(OddsProvider):
     def _resolve(self, abbr: str) -> str:
         return ABBR_TO_ELO.get(abbr, abbr)
 
-    def _cache_key(self, a: str, b: str) -> str:
-        return "_".join(sorted([a, b]))
+    @staticmethod
+    def _oriented(data: dict, swapped: bool) -> dict:
+        """``data`` is always stored for the canonical (sorted) team order. Flip
+        it back to the caller's requested (home, away) order when that's the
+        reverse of canonical — p_a/p_b swap and supremacy (home's expected goal
+        margin) negates; p_draw is symmetric."""
+        if not swapped:
+            return dict(data)
+        return {
+            "p_a": data["p_b"], "p_b": data["p_a"],
+            "p_draw": data["p_draw"], "supremacy": -data["supremacy"],
+        }
 
     def match_probabilities(self, home: str, away: str) -> dict:
         code_a = self._resolve(home)
         code_b = self._resolve(away)
-        key = self._cache_key(code_a, code_b)
+        canon_a, canon_b = sorted([code_a, code_b])
+        key = f"{canon_a}_{canon_b}"
+        swapped = code_a != canon_a   # requested order is the reverse of canonical
 
         entry = self._cache.get(key)
         if entry and (time.time() - entry.get("ts", 0)) < self._ttl:
-            return entry["data"]
+            return self._oriented(entry["data"], swapped)
 
         try:
-            url = f"{ELO_BASE_URL}/{code_a}/{code_b}"
+            # Always fetch in canonical order so a later call for the same pair
+            # in the opposite order can reuse this entry (re-oriented on read)
+            # instead of triggering a second, redundant fetch.
+            url = f"{ELO_BASE_URL}/{canon_a}/{canon_b}"
             req = urllib.request.Request(url, headers={"User-Agent": "wc-tracker/1.0"})
             with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
                 raw = json.loads(resp.read().decode("utf-8"))
@@ -104,7 +119,7 @@ class EloOdds(OddsProvider):
             }
             self._cache[key] = {"data": result, "ts": time.time()}
             self._save()
-            return result
+            return self._oriented(result, swapped)
 
         except Exception as exc:
             import warnings
