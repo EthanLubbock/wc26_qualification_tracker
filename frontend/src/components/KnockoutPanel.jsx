@@ -107,25 +107,61 @@ const OPP_ROUNDS = [
   { key: 'F', label: 'Final' },
 ]
 
-function R32Tie({ tie, target }) {
-  if (!tie) return null
-  const decided = tie.winner != null
-  const live = tie.state === 'in'
-  const hasScore = tie.home_score != null && tie.away_score != null
-  const status = live ? 'Live' : decided ? 'Full time' : `Kick-off ${koDatetime(tie.kickoff)}`
-  const won = decided && tie.winner === target
+const ROUND_LABEL = {
+  R32: 'Round of 32', R16: 'Round of 16',
+  QF: 'Quarter-final', SF: 'Semi-final', F: 'Final',
+}
+
+// One side of a game: a real team (highlighted if it's the target / the winner)
+// or a "Winner of A v B" placeholder when the opponent isn't decided yet.
+function SideName({ side }) {
+  if (side.placeholder) return <span className="ko-tbd">{side.label}</span>
+  return <span className={side.is_target ? 'tgt' : ''}>{side.name || side.abbr}</span>
+}
+
+function GameCard({ game, target }) {
+  const [home, away] = game.sides
+  const decided = game.winner != null
+  const live = game.state === 'in'
+  const played = live || game.state === 'post'
+  const won = decided && game.winner === target
+  const status = live ? 'Live' : decided ? 'Full time' : `Kick-off ${koDatetime(game.kickoff)}`
+  // Score only for games actually under way / finished — ESPN reports 0–0 for
+  // upcoming ties, which we show as "v" instead.
+  const showScore = played && home.score != null && away.score != null
+  const showOdds = game.state === 'pre' && home.win_pct != null && away.win_pct != null
+  const advClass = side => (decided && !side.placeholder && game.winner === side.abbr ? 'adv' : '')
   return (
     <div className={`ko-tie ${decided ? (won ? 'win' : 'lose') : ''}`}>
       <div className="ko-tie-label">
-        Round of 32
+        {ROUND_LABEL[game.round] || game.round}
         {live && <span className="dot" />}
         <span>{status}</span>
       </div>
       <div className="ko-tie-teams">
-        <span className={tie.winner === tie.home ? 'adv' : ''}>{tie.home_name || tie.home}</span>
-        <span className="ko-sc">{hasScore ? `${tie.home_score}–${tie.away_score}` : 'v'}</span>
-        <span className={tie.winner === tie.away ? 'adv' : ''}>{tie.away_name || tie.away}</span>
+        <span className={advClass(home)}><SideName side={home} /></span>
+        <span className="ko-sc">{showScore ? `${home.score}–${away.score}` : 'v'}</span>
+        <span className={advClass(away)}><SideName side={away} /></span>
       </div>
+      {showOdds && (
+        <div className="ko-odds-bar">
+          <span className={`ko-odds-pct ${pClass(home.win_pct)}`}>{pct(home.win_pct)}</span>
+          <div className="ko-odds-track">
+            <div className={`ko-odds-seg ${pClass(home.win_pct)}`} style={{ width: `${home.win_pct * 100}%` }} />
+            <div className={`ko-odds-seg ${pClass(away.win_pct)}`} style={{ width: `${away.win_pct * 100}%` }} />
+          </div>
+          <span className={`ko-odds-pct ${pClass(away.win_pct)}`}>{pct(away.win_pct)}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function NextGames({ games, target }) {
+  if (!games || !games.length) return null
+  return (
+    <div className="ko-games">
+      {games.map((g, i) => <GameCard key={`${g.round}-${i}`} game={g} target={target} />)}
     </div>
   )
 }
@@ -207,7 +243,7 @@ export default function KnockoutPanel({ knockout, team, targetName, allTeams, on
         })}
       </div>
 
-      <R32Tie tie={tie} target={team} />
+      <NextGames games={knockout.games} target={team} />
 
       <WhatIf tie={tie} target={team} targetName={targetName}
         whatif={whatif} onWhatif={onWhatif} />

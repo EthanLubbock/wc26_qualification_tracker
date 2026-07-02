@@ -174,6 +174,34 @@ def _bracket_tree(kdata: dict) -> dict:
     return {"rounds": list(kbracket.ROUNDS), "children": children, "slots": slots}
 
 
+def _serialize_games(games: list[dict], names: dict) -> list[dict]:
+    """Resolve abbreviations to full names for the frontend and turn placeholder
+    opponents into a 'Winner of A v B' label."""
+    out = []
+    for g in games:
+        sides = []
+        for s in g["sides"]:
+            if s.get("placeholder"):
+                cands = [names.get(a, a) for a in s.get("candidates", [])]
+                label = f"Winner of {' v '.join(cands)}" if cands else "Winner (TBD)"
+                sides.append({
+                    "placeholder": True, "label": label,
+                    "win_pct": None, "is_target": s.get("is_target", False),
+                })
+            else:
+                a = s["abbr"]
+                sides.append({
+                    "abbr": a, "name": names.get(a, a),
+                    "score": s.get("score"), "win_pct": s.get("win_pct"),
+                    "is_target": s.get("is_target", False),
+                })
+        out.append({
+            "round": g["round"], "kickoff": g["kickoff"], "state": g["state"],
+            "winner": g["winner"], "sides": sides,
+        })
+    return out
+
+
 def _knockout_payload(team: str, kdata: dict | None) -> dict | None:
     """Per-team knockout view: reach probabilities, R32 tie and likely opponents
     per upcoming round. None when the group stage isn't complete."""
@@ -187,12 +215,15 @@ def _knockout_payload(team: str, kdata: dict | None) -> dict | None:
         "default_team": kdata["default_team"],
         "reach": reach,
         "r32_tie": None,
+        "games": [],
         "opponents": {},
         "path": [[s.round, s.index] for s in kbracket.target_path(b, team)],
     }
     if not in_bracket:
         payload["reach"] = {k: 0.0 for k in reach}
         return payload
+
+    payload["games"] = _serialize_games(kbracket.next_games(b, _odds, team), names)
 
     m = kdata["r32"][team]
     payload["r32_tie"] = {

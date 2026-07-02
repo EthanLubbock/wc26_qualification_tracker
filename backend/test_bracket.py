@@ -10,6 +10,7 @@ import bracket
 from bracket import (
     Slot, build_bracket, advance_probability, advance_distributions,
     reach_probabilities, opponent_distribution, title_odds,
+    current_knockout_round, next_games,
 )
 
 
@@ -150,10 +151,105 @@ def test_build_bracket_filters_placeholders():
     print("build_bracket fills real teams, drops placeholders, records winners: PASS")
 
 
+# --- fixture metadata + rolling "next games" window -----------------------
+
+def test_build_bracket_carries_fixture_metadata():
+    m = SimpleNamespace(round="R32", home="T00", away="T01", winner=None,
+                        kickoff="2026-06-28T19:00Z", order=0,
+                        state="post", home_score=2, away_score=1)
+    b = build_bracket([m], {"T00", "T01"})
+    slot = b["R32"][0]
+    assert slot.state == "post" and slot.kickoff == "2026-06-28T19:00Z", slot
+    assert slot.home_score == 2 and slot.away_score == 1, slot
+    print("build_bracket carries kickoff/state/score onto slots: PASS")
+
+
+def _wired(valid):
+    """Fully wired but empty bracket (feeds_into set, all slots blank)."""
+    return build_bracket([], valid)
+
+
+VALID = {"ENG", "COD", "MEX", "ECU", "AAA", "BBB"}
+
+
+def test_current_knockout_round():
+    b = _wired(VALID)
+    b["R32"][7].team_a, b["R32"][7].team_b = "ENG", "COD"     # undecided R32 tie
+    assert current_knockout_round(b) == "R32", current_knockout_round(b)
+    b["R32"][7].winner = "ENG"                                # now decided
+    assert current_knockout_round(b) == "F", current_knockout_round(b)  # nothing else live
+    # a live R16 tie now becomes the current round
+    b["R16"][3].team_a, b["R16"][3].team_b = "ENG", "MEX"
+    assert current_knockout_round(b) == "R16", current_knockout_round(b)
+    print("current_knockout_round tracks earliest undecided real tie: PASS")
+
+
+def test_next_games_concrete_and_known_opponent():
+    odds = StubOdds({"ENG": 3, "COD": 1, "MEX": 1})
+    b = _wired(VALID)
+    b["R32"][7].team_a, b["R32"][7].team_b, b["R32"][7].state = "ENG", "COD", "pre"
+    b["R32"][6].team_a, b["R32"][6].team_b = "MEX", "ECU"
+    b["R32"][6].winner, b["R32"][6].state = "MEX", "post"     # sibling decided
+    b["R16"][3].state = "pre"                                 # R16 placeholder fixture exists
+
+    games = next_games(b, odds, "ENG")
+    assert len(games) == 2, games
+    g1, g2 = games
+    # current-round game: concrete ENG v COD, upcoming -> odds present, summing ~1
+    assert g1["round"] == "R32" and g1["winner"] is None
+    a, c = g1["sides"]
+    assert {a["abbr"], c["abbr"]} == {"ENG", "COD"}
+    assert approx(a["win_pct"] + c["win_pct"], 1.0), g1
+    assert next(s for s in g1["sides"] if s["abbr"] == "ENG")["is_target"]
+    # next-round game: opponent known (MEX won its tie), upcoming -> odds present
+    assert g2["round"] == "R16"
+    abbrs = {s["abbr"] for s in g2["sides"]}
+    assert abbrs == {"ENG", "MEX"}, g2
+    assert all(s["win_pct"] is not None for s in g2["sides"]), g2
+    print("next_games: concrete current tie + known next opponent, both with odds: PASS")
+
+
+def test_next_games_placeholder_opponent():
+    odds = StubOdds({"ENG": 2, "COD": 1})
+    b = _wired(VALID)
+    b["R32"][7].team_a, b["R32"][7].team_b, b["R32"][7].state = "ENG", "COD", "pre"
+    b["R32"][6].team_a, b["R32"][6].team_b, b["R32"][6].state = "MEX", "ECU", "pre"  # sibling open
+    b["R16"][3].state = "pre"
+
+    games = next_games(b, odds, "ENG")
+    assert len(games) == 2, games
+    g2 = games[1]
+    tgt = next(s for s in g2["sides"] if not s.get("placeholder"))
+    ph = next(s for s in g2["sides"] if s.get("placeholder"))
+    assert tgt["abbr"] == "ENG" and tgt["is_target"], g2
+    assert sorted(ph["candidates"]) == ["ECU", "MEX"], ph
+    assert ph["win_pct"] is None and tgt["win_pct"] is None, g2   # no odds vs unknown side
+    print("next_games: undecided next opponent -> placeholder with feeding teams, no odds: PASS")
+
+
+def test_next_games_elimination_guard():
+    odds = StubOdds()
+    b = _wired(VALID)
+    b["R32"][0].team_a, b["R32"][0].team_b, b["R32"][0].state = "AAA", "BBB", "pre"  # keeps round live
+    b["R32"][7].team_a, b["R32"][7].team_b = "ENG", "COD"
+    b["R32"][7].winner, b["R32"][7].state = "COD", "post"     # ENG lost its current tie
+    b["R32"][7].home_score, b["R32"][7].away_score = 0, 1
+
+    games = next_games(b, odds, "ENG")
+    assert len(games) == 1, games                            # no next game once out
+    assert games[0]["round"] == "R32" and games[0]["winner"] == "COD", games
+    print("next_games: eliminated in current round -> single (losing) game only: PASS")
+
+
 if __name__ == "__main__":
     test_toy_hand_computed()
     test_no_draw_split()
     test_anchoring()
     test_full_tree_equal_strength()
     test_build_bracket_filters_placeholders()
+    test_build_bracket_carries_fixture_metadata()
+    test_current_knockout_round()
+    test_next_games_concrete_and_known_opponent()
+    test_next_games_placeholder_opponent()
+    test_next_games_elimination_guard()
     print("\nAll bracket assertions passed.")

@@ -69,6 +69,12 @@ class Slot:
     team_b: str | None = None
     winner: str | None = None
     feeds_into: tuple[str, int] | None = None
+    # Fixture metadata copied from the underlying ESPN match so any round's slot
+    # (not just R32) can render kickoff/live-score without a separate lookup.
+    kickoff: str = ""
+    state: str = ""            # "pre" | "in" | "post"
+    home_score: int | None = None
+    away_score: int | None = None
 
 
 # --- bracket construction --------------------------------------------------
@@ -108,6 +114,12 @@ def build_bracket(knockout_matches, valid_abbrs) -> dict[str, list[Slot]]:
             slot.team_a = m.home if m.home in valid else None
             slot.team_b = m.away if m.away in valid else None
             slot.winner = m.winner if m.winner in valid else None
+            # Carry the fixture metadata so higher-round slots can render kickoff
+            # and live/final scores too (placeholder ties still have a fixture).
+            slot.kickoff = getattr(m, "kickoff", "")
+            slot.state = getattr(m, "state", "")
+            slot.home_score = getattr(m, "home_score", None)
+            slot.away_score = getattr(m, "away_score", None)
     return bracket
 
 
@@ -276,6 +288,117 @@ def opponent_distribution(bracket: dict[str, list[Slot]], odds, target: str, rou
     if adv is None:
         adv = advance_distributions(bracket, odds)
     return dict(adv.get(sibling, {}))
+
+
+# --- rolling "next games" window -------------------------------------------
+
+def current_knockout_round(bracket: dict[str, list[Slot]]) -> str:
+    """The earliest round that still has a real, undecided tie — i.e. the round
+    currently being played across the whole tournament. Falls back to the Final
+    when every tie is decided."""
+    for rnd in ROUNDS:
+        for slot in bracket.get(rnd, []):
+            if slot.winner is None and (slot.team_a or slot.team_b):
+                return rnd
+    return "F"
+
+
+def _game_descriptor(bracket, odds, target: str, slot: Slot, path: list[Slot]) -> dict:
+    """One game in the target's window: round/kickoff/state/winner plus two
+    ``sides``. A side is either a real team ({abbr, score, win_pct, is_target})
+    or, for an undetermined next opponent, a placeholder ({placeholder: True,
+    candidates: [feeding teams], ...}). ``win_pct`` is set only for an upcoming
+    tie with both teams known."""
+    a, b = slot.team_a, slot.team_b
+    game = {
+        "round": slot.round,
+        "kickoff": slot.kickoff,
+        "state": slot.state,
+        "winner": slot.winner,
+        "sides": [],
+    }
+
+    # Concrete tie (current-round game, or a next-round game whose feeders are
+    # both decided): two known teams.
+    if a and b:
+        pa = pb = None
+        if slot.state == "pre" and slot.winner is None:
+            pa, pb = advance_probability(odds, a, b)
+        game["sides"] = [
+            {"abbr": a, "score": slot.home_score, "win_pct": pa, "is_target": a == target},
+            {"abbr": b, "score": slot.away_score, "win_pct": pb, "is_target": b == target},
+        ]
+        return game
+
+    # Placeholder tie: the target is assumed on one side; the opponent comes out
+    # of the sibling feeding tie, which may itself be decided or still open.
+    idx = ROUNDS.index(slot.round)
+    lower_round = ROUNDS[idx - 1] if idx > 0 else None
+    target_child = next((s for s in path if s.round == lower_round), None)
+    kids = CHILDREN.get((slot.round, slot.index), [])
+    sibling_key = next(
+        (k for k in kids if target_child is None or k != (target_child.round, target_child.index)),
+        None,
+    )
+    sibling = bracket[sibling_key[0]][sibling_key[1]] if sibling_key else None
+
+    if sibling is not None and sibling.winner is not None:
+        opp = sibling.winner
+        pt = po = None
+        if slot.state == "pre":
+            pt, po = advance_probability(odds, target, opp)
+        game["sides"] = [
+            {"abbr": target, "score": None, "win_pct": pt, "is_target": True},
+            {"abbr": opp, "score": None, "win_pct": po, "is_target": False},
+        ]
+    else:
+        candidates = [t for t in (sibling.team_a, sibling.team_b) if t] if sibling else []
+        game["sides"] = [
+            {"abbr": target, "score": None, "win_pct": None, "is_target": True},
+            {"placeholder": True, "candidates": candidates, "win_pct": None, "is_target": False},
+        ]
+    return game
+
+
+def next_games(bracket: dict[str, list[Slot]], odds, target: str) -> list[dict]:
+    """Up to two games for ``target``: their game in the current knockout round
+    plus their game in the next round (opponent may be a "winner of A v B"
+    placeholder). If the target was eliminated before the current round, only
+    their last (losing) game is returned; likewise once they lose the current
+    tie there is no next game."""
+    path = _target_path(bracket, target)
+    if not path:
+        return []
+    order = [r for r in ROUNDS if r in bracket]
+    if not order:
+        return []
+    cr = current_knockout_round(bracket)
+    cr_idx = order.index(cr) if cr in order else len(order) - 1
+
+    # Furthest round the target is actually a listed competitor in (their
+    # frontier). Path index == round position, leaf first.
+    frontier_idx = 0
+    for i, slot in enumerate(path):
+        if target in (slot.team_a, slot.team_b):
+            frontier_idx = i
+        else:
+            break
+
+    # Eliminated before the current round: show only their last game.
+    if frontier_idx < cr_idx:
+        return [_game_descriptor(bracket, odds, target, path[frontier_idx], path)]
+
+    games = [_game_descriptor(bracket, odds, target, path[cr_idx], path)]
+
+    # Lost the current-round tie -> no next game.
+    game1_slot = path[cr_idx]
+    if game1_slot.winner is not None and game1_slot.winner != target:
+        return games
+
+    # Next-round game, unless the current round is the last one present (Final).
+    if cr_idx + 1 < len(order):
+        games.append(_game_descriptor(bracket, odds, target, path[cr_idx + 1], path))
+    return games
 
 
 def title_odds(bracket: dict[str, list[Slot]], odds, adv=None) -> dict[str, float]:
