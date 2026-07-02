@@ -34,18 +34,23 @@ NEXT_ROUND = {"R32": "R16", "R16": "QF", "QF": "SF", "SF": "F", "F": "champion"}
 
 SHOOTOUT_SPLIT = 0.5   # share of 90-min draw mass assigned to team A (ET+pens ≈ coin flip)
 
-# Fixed 2026 tree: parent slot -> its two child slots (0-based indices).
-# Derived from the ESPN feed's placeholder wiring (e.g. R16 #1 is fed by
-# "Round of 32 1 Winner" and "Round of 32 3 Winner"), verified 2026-06-29.
+# Fixed 2026 tree: parent slot -> its two child slots (0-based indices), where
+# slot 0-based index N corresponds to ESPN's official "Round of 32 (N+1)
+# Winner" / "Round of 16 (N+1) Winner" placeholder numbering. That numbering
+# runs in kickoff-chronological order within the round (see build_bracket's
+# sort key), *not* ESPN's internal event-id order. Verified 2026-07-02 against
+# ESPN's own placeholder text on undecided ties (e.g. "Round of 32 9 Winner")
+# cross-checked against already-resolved ties (e.g. R16 #4 = MEX vs ENG, fed
+# by Round of 32 matches 7 and 8).
 CHILDREN: dict[tuple[str, int], list[tuple[str, int]]] = {
-    ("R16", 0): [("R32", 0), ("R32", 2)],
-    ("R16", 1): [("R32", 1), ("R32", 4)],
-    ("R16", 2): [("R32", 3), ("R32", 5)],
+    ("R16", 0): [("R32", 0), ("R32", 3)],
+    ("R16", 1): [("R32", 2), ("R32", 5)],
+    ("R16", 2): [("R32", 1), ("R32", 4)],
     ("R16", 3): [("R32", 6), ("R32", 7)],
     ("R16", 4): [("R32", 10), ("R32", 11)],
     ("R16", 5): [("R32", 8), ("R32", 9)],
-    ("R16", 6): [("R32", 12), ("R32", 14)],
-    ("R16", 7): [("R32", 13), ("R32", 15)],
+    ("R16", 6): [("R32", 13), ("R32", 15)],
+    ("R16", 7): [("R32", 12), ("R32", 14)],
     ("QF", 0): [("R16", 0), ("R16", 1)],
     ("QF", 1): [("R16", 4), ("R16", 5)],
     ("QF", 2): [("R16", 2), ("R16", 3)],
@@ -88,13 +93,17 @@ def build_bracket(knockout_matches, valid_abbrs) -> dict[str, list[Slot]]:
         for crnd, cidx in kids:
             bracket[crnd][cidx].feeds_into = (prnd, pidx)
 
-    # Populate each round's slots from its fixtures, ordered by ESPN match number.
+    # Populate each round's slots from its fixtures, in kickoff-chronological
+    # order — that's the order ESPN's own "Round of 32 N Winner" placeholder
+    # numbering follows, which CHILDREN is keyed against. ESPN's event ``id``
+    # is *not* reliably chronological (e.g. two 2026-06-29/30 R32 ties have
+    # ids out of kickoff order), so it can't be used as the primary sort key.
     by_round: dict[str, list] = {r: [] for r in ROUNDS}
     for m in knockout_matches:
         if m.round in by_round:
             by_round[m.round].append(m)
     for rnd, matches in by_round.items():
-        matches.sort(key=lambda m: (getattr(m, "order", 0), m.kickoff))
+        matches.sort(key=lambda m: (m.kickoff, getattr(m, "order", 0)))
         for slot, m in zip(bracket[rnd], matches):
             slot.team_a = m.home if m.home in valid else None
             slot.team_b = m.away if m.away in valid else None
